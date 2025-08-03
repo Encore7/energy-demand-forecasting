@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pydantic
+requests
+redis
+psycopg2-binary
+sqlalchemy
+python-dotenv
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-requests
+prometheus-client
