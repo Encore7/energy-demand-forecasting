@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     Attributes:
         PROJECT_NAME (str): Name of the project.
         ENVIRONMENT (Literal): Environment type (local, staging, production).
+        VERSION (str): Application version.
+        API_V1_STR (str): API versioning string.
         DATABASE_URL (str): PostgreSQL database connection URL.
         REDIS_URL (str): Redis connection URL.
         OTLP_ENDPOINT (AnyHttpUrl): Endpoint for Grafana OTLP tracing.
@@ -29,6 +31,8 @@ class Settings(BaseSettings):
 
     # Core App Info
     PROJECT_NAME: str = "Energy Demand Forecasting"
+    VERSION: str = "0.1.0"
+    API_V1_STR: str = "/v1"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
 
     # PostgreSQL & Redis
