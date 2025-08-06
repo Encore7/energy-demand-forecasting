@@ -1,0 +1,16 @@
+name: "energy_forecasting"
+version: "1.0"
+profile: "energy_forecasting"
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target"]
+
+models:
+  energy_forecasting:
+    staging:
+      +schema: staging
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
