@@ -1,0 +1,162 @@
+services:
+  # ------- Kafka stack -------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports: [ "2181:2181" ]
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    depends_on: [ zookeeper ]
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports: [ "9092:9092" ]
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.1
+    depends_on: [ kafka ]
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    ports: [ "8081:8081" ]
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    depends_on: [ kafka, schema-registry ]
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+    ports: [ "8085:8080" ]
+
+  # ------- Storage: MinIO + lakeFS -------
+  minio:
+    image: minio/minio:RELEASE.2025-01-06T22-19-12Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio123}
+    volumes: [ "minio-data:/data" ]
+    ports: [ "9000:9000", "9001:9001" ]
+
+  lakefs-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: lakefs
+      POSTGRES_PASSWORD: lakefs
+      POSTGRES_DB: lakefs
+    volumes: [ "lakefs-db:/var/lib/postgresql/data" ]
+
+  lakefs:
+    image: treeverse/lakefs:latest
+    depends_on: [ minio, lakefs-db ]
+    environment:
+      LAKEFS_DATABASE_CONNECTION_STRING: postgres://lakefs:lakefs@lakefs-db:5432/lakefs?sslmode=disable
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: "changeme-32-bytes-aaaaaaaaaaaaaa"
+      LAKEFS_BLOCKSTORE_TYPE: s3
+      LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://minio:9000
+      LAKEFS_BLOCKSTORE_S3_REGION: us-east-1
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio123}
+      LAKEFS_LOGGING_FORMAT: json
+    ports: [ "8002:8000" ]
+
+  # ------- Redis (Feast Online later) -------
+  redis:
+    image: redis:7
+    ports: [ "6379:6379" ]
+
+  # ------- MLflow -------
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    depends_on: [ minio ]
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minio123}
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root s3://mlflow
+      --host 0.0.0.0 --port 5000
+    ports: [ "5000:5000" ]
+    volumes: [ "mlflow-backend:/mlflow" ]
+
+  # ------- Airflow (DAGs later) -------
+  airflow-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes: [ "airflow-db:/var/lib/postgresql/data" ]
+
+  airflow-webserver:
+    image: apache/airflow:2.9.3
+    depends_on: [ airflow-db ]
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-admin}
+    command: webserver
+    ports: [ "8080:8080" ]
+    volumes:
+      - ../../dags:/opt/airflow/dags
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.3
+    depends_on: [ airflow-db, airflow-webserver ]
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+    command: scheduler
+    volumes:
+      - ../../dags:/opt/airflow/dags
+
+  # ------- OTel Collector (to Grafana Cloud) -------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    environment:
+      OTLP_ENDPOINT: ${OTLP_ENDPOINT}
+      OTLP_TOKEN: ${OTLP_TOKEN}
+    volumes:
+      - ./otel/otel-collector-config.yml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC in
+      - "4318:4318"   # OTLP HTTP in
+
+  # ------- App stubs -------
+  da-svc:
+    build: ../../apps/da-svc
+    depends_on: [ otel-collector ]
+    environment:
+      # If using Collector as single hop (recommended)
+      OTLP_ENDPOINT: http://otel-collector:4318   # if your code expects HTTP
+      OTLP_TOKEN: ""   # not needed when sending to collector
+      PROJECT_NAME: ${PROJECT_NAME:-energy-forecasting}
+    ports: [ "8000:8000" ]
+
+  id-svc:
+    build: ../../apps/id-svc
+    depends_on: [ redis, otel-collector ]
+    environment:
+      OTLP_ENDPOINT: http://otel-collector:4318
+      OTLP_TOKEN: ""
+      PROJECT_NAME: ${PROJECT_NAME:-energy-forecasting}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports: [ "8001:8001" ]
+
+volumes:
+  minio-data: {}
+  lakefs-db: {}
+  airflow-db: {}
+  mlflow-backend: {}
