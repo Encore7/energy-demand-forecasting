@@ -1,0 +1,9 @@
+[project]
+name = "id-svc"
+version = "0.0.1"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.112", "uvicorn[standard]>=0.30", "redis>=5", "common @ file:///${PROJECT_ROOT}/libs/common"]
+
+[build-system]
+requires = ["setuptools","wheel"]
+build-backend = "setuptools.build_meta"
