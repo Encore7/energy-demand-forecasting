@@ -1,5 +1,5 @@
 services:
-  # ------- Kafka stack -------
+  #  Kafka stack 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
     environment:
@@ -35,7 +35,7 @@ services:
       KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
     ports: [ "8085:8080" ]
 
-  # ------- Storage: MinIO + lakeFS -------
+  #  Storage: MinIO + lakeFS 
   minio:
     image: minio/minio:RELEASE.2025-01-06T22-19-12Z
     command: server /data --console-address ":9001"
@@ -68,12 +68,12 @@ services:
       LAKEFS_LOGGING_FORMAT: json
     ports: [ "8002:8000" ]
 
-  # ------- Redis (Feast Online later) -------
+  #  Redis (Feast Online later) 
   redis:
     image: redis:7
     ports: [ "6379:6379" ]
 
-  # ------- MLflow -------
+  #  MLflow 
   mlflow:
     image: ghcr.io/mlflow/mlflow:latest
     depends_on: [ minio ]
@@ -89,7 +89,7 @@ services:
     ports: [ "5000:5000" ]
     volumes: [ "mlflow-backend:/mlflow" ]
 
-  # ------- Airflow (DAGs later) -------
+  #  Airflow (DAGs later) 
   airflow-db:
     image: postgres:16
     environment:
@@ -121,7 +121,7 @@ services:
     volumes:
       - ../../dags:/opt/airflow/dags
 
-  # ------- OTel Collector (to Grafana Cloud) -------
+  #  OTel Collector (to Grafana Cloud) 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.108.0
     environment:
@@ -133,7 +133,7 @@ services:
       - "4317:4317"   # OTLP gRPC in
       - "4318:4318"   # OTLP HTTP in
 
-  # ------- App stubs -------
+  #  App stubs 
   da-svc:
     build: ../../apps/da-svc
     depends_on: [ otel-collector ]
