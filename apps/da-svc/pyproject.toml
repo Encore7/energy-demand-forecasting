@@ -2,7 +2,11 @@
 name = "da-svc"
 version = "0.0.1"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.112", "uvicorn[standard]>=0.30", "common @ file:///${PROJECT_ROOT}/libs/common"]
+dependencies = [
+  "fastapi>=0.112",
+  "uvicorn[standard]>=0.30",
+  "common>=0.0.1"
+]
 
 [build-system]
 requires = ["setuptools","wheel"]
