@@ -1,7 +1,8 @@
 from datetime import date
 
-from common.otel import setup_tracing
 from fastapi import FastAPI, Query
+
+from libs.common.otel import setup_tracing
 
 app = FastAPI(title="da-svc", version="0.1.0")
 setup_tracing(service_name="da-svc")
