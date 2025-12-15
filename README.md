@@ -1,52 +1,64 @@
 # Energy Demand Forecasting Platform (Day-Ahead & Intraday)
 
 ## Overview
-This repository contains a **production-grade energy demand forecasting platform**.
+This repository implements a **production-grade energy demand forecasting platform**
+designed to mirror **real-world utility and big-tech ML systems**.
 
-The system supports two forecasting horizons:
+The platform supports two forecasting horizons:
 - **Day-Ahead** forecasts for planning and market operations
-- **Intraday** forecasts for low-latency operational corrections
+- **Intraday** forecasts for low-latency operational correction
 
-Both horizons are implemented as part of **one unified ML platform**.
+Both horizons are implemented as part of **one unified ML platform**
+with shared data contracts, observability, and MLOps workflows.
 
 ---
 
 ## Design Goals
 - Realistic production architecture
-- Clear service boundaries
+- Clear service boundaries and ownership
 - Full observability (logs, metrics, traces)
-- Automated training and retraining
-- Drift detection with explicit actions
-- Local development, cloud-ready deployment
+- Automated training, retraining, and rollback
+- Explicit drift detection and mitigation
+- Local-first development with cloud-ready deployment
 
-This is **not a research project**.
-It is a **production system simulation**.
+This is **not a research prototype**.
+It is a **production system simulation** focused on operability and correctness.
 
 ---
 
 ## Forecasting Horizons
 
 ### Day-Ahead Forecasting
-- Horizon: 24–48 hours
-- Update cadence: Daily
-- Latency tolerance: Minutes
-- Purpose: Planning, market bidding
+- Horizon: 24–48 hours  
+- Update cadence: Daily  
+- Latency tolerance: Minutes  
+- Purpose: Planning, scheduling, market bidding  
 
 ### Intraday Forecasting
-- Horizon: 15 minutes to 6 hours
-- Update cadence: Every 5–15 minutes
-- Latency tolerance: Seconds
-- Purpose: Operational correction and stability
+- Horizon: 15 minutes to 6 hours  
+- Update cadence: Every 5–15 minutes  
+- Latency tolerance: Seconds  
+- Purpose: Operational correction and stability  
 
-Intraday forecasts **correct the day-ahead baseline**, they do not replace it.
+Intraday forecasts **correct the day-ahead baseline** rather than replacing it.
 
 ---
 
-## System Design
+## System Architecture
 
 <p align="center">
-  <img src="system-design.svg" alt="System Design Diagram" width="100%">
+  <img src="system-design.svg" alt="System Architecture Diagram" width="100%">
 </p>
+
+The diagram shows the full end-to-end platform, including:
+- batch (day-ahead) pipelines
+- streaming (intraday) pipelines
+- feature stores
+- training and inference paths
+- observability integration
+
+A detailed architectural walkthrough is provided in:
+- **`docs/architecture.md`** (what exists and how data flows)
 
 ---
 
@@ -55,83 +67,97 @@ Intraday forecasts **correct the day-ahead baseline**, they do not replace it.
 | Layer | Technology | Reason |
 |---|---|---|
 | Object storage | MinIO (S3-compatible) | Local-first, cloud portable |
-| Lakehouse | Apache Iceberg | Industry standard, open |
-| Metadata / SQL | PostgreSQL | Simple, reliable |
-| Streaming backbone | Redpanda (Kafka API) | Kafka semantics, no ZooKeeper |
-| Intraday aggregation | **Apache Flink** | Event-time, state, lateness |
-| Batch compute | Spark | Feature engineering |
-| Online store | Redis | Low-latency reads |
-| Orchestration | Airflow | Industry-standard DAGs |
-| ML tracking | MLflow | Experiments + registry |
+| Lakehouse | Apache Iceberg | Open, industry-standard table format |
+| Metadata / SQL | PostgreSQL | Simple, reliable metadata store |
+| Streaming backbone | Redpanda (Kafka API) | Kafka semantics without ZooKeeper |
+| Intraday aggregation | **Apache Flink** | Event-time, stateful processing |
+| Batch compute | Spark | Reproducible feature engineering |
+| Online store | Redis | Low-latency feature access |
+| Orchestration | Airflow | Industry-standard DAG orchestration |
+| ML tracking | MLflow | Experiments, registry, rollback |
 | Observability | OpenTelemetry + Grafana stack | Unified telemetry |
 
 ---
 
-## Why Flink for Intraday
+## Design Rationale (Summary)
+
+### Why Flink for Intraday
 Intraday forecasting requires:
-- Stateful windowed aggregation
-- Event-time correctness
-- Bounded lateness handling
-- Fault-tolerant state recovery
+- event-time windowed aggregation
+- stateful processing
+- bounded lateness handling
+- fault-tolerant recovery
 
-Apache Flink provides these **natively**, avoiding custom re-implementation.
+Apache Flink provides these guarantees natively.
+It is used **only** for intraday aggregation.
 
-Flink is **used only for intraday aggregation**.
-Batch workloads remain on Spark.
+Batch workloads (training and day-ahead inference) remain on Spark.
+
+A full rationale is documented in:
+- **`docs/system-design.md`**
+- **`docs/adr/ADR-003-why-flink-for-intraday.md`**
 
 ---
 
 ## Observability
-All services emit:
-- **Traces** (request + pipeline spans)
-- **Metrics** (latency, throughput, freshness, model quality)
-- **Logs** with trace/span correlation
+All services emit telemetry via OpenTelemetry:
+- **Traces** for end-to-end request and pipeline visibility
+- **Metrics** for latency, throughput, freshness, and model quality
+- **Logs** correlated with trace and span identifiers
 
-Telemetry flow:
-Service → OTEL SDK → OTEL Collector → Grafana (Tempo, Loki, Prometheus)
+Telemetry flow: Service → OTEL SDK → OTEL Collector → Grafana (Tempo, Loki, Prometheus)
+
+
+Observability decisions are documented in:
+- **`docs/adr/ADR-005-otel-observability.md`**
 
 ---
 
 ## Orchestration & MLOps
 Airflow DAGs automate:
-- Data ingestion
-- Feature generation
-- Day-ahead training and backtesting
-- Model promotion
-- Batch forecasting
-- Drift checks and automated actions
+- data ingestion
+- feature generation
+- day-ahead training and backtesting
+- model promotion and rollback
+- batch forecasting
+- drift checks and retraining triggers
+
+Operational workflows and failure handling are documented in:
+- **`docs/runbooks/`**
 
 ---
 
 ## Drift Detection & Actions
-Drift is monitored for:
-- Feature distributions
-- Prediction residuals
-- Data freshness and volume
+The platform monitors:
+- feature distribution drift
+- prediction residual drift
+- data freshness and volume anomalies
 
-Actions include:
-- Alerting
-- Shadow evaluation
-- Rollback to last approved model
-- Triggered retraining
+Supported actions:
+- alerting
+- shadow evaluation
+- rollback to last approved model
+- triggered retraining
+
+Design details are documented in:
+- **`docs/adr/ADR-006-drift-detection-and-actions.md`**
 
 ---
 
 ## Repository Structure
-- `platform/` – shared production utilities
-- `services/` – microservice-style components
-- `ml/` – reusable ML logic
-- `infra/` – local-first infrastructure
-- `monitoring/` – dashboards, alerts, SLOs
-- `docs/` – ADRs, architecture, runbooks
+- `platform/` – shared production utilities (config, logging, tracing, metrics)
+- `services/` – microservice-style runtime components
+- `ml/` – reusable ML logic (baselines, training, evaluation)
+- `infra/` – local-first infrastructure and observability stack
+- `monitoring/` – dashboards, alerts, SLO definitions
+- `docs/` – architecture, system design, ADRs, and runbooks
 
 ---
 
 ## Local-First, Cloud-Ready
-All services are containerized.
-Infrastructure is configurable via environment variables.
+All components are containerized and configured via environment variables.
 
-Deployment to cloud platforms requires **no code changes**:
+Deploying to managed cloud services requires **no code changes** —
 only infrastructure configuration.
 
 ---
@@ -144,3 +170,4 @@ It does not represent a real utility deployment.
 
 ## Author
 Aman Kumar
+
