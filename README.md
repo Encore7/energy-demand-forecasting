@@ -1,32 +1,44 @@
-# ⚡ Real-Time Energy Demand Forecasting System
+# Energy Demand Forecasting Platform (Day-Ahead & Intraday)
 
-A production-ready, **local-first** machine learning system for forecasting **Germany's energy demand** in:
-- **Day-Ahead (DA)** market (24×1h forecast, once daily)
-- **Intraday (ID)** market (rolling forecasts every 5–15 minutes)
+## Overview
+This repository contains a **production-grade energy demand forecasting platform**.
 
-Designed to run locally via **Docker Compose** for staging, but fully portable to **Kubernetes** or cloud environments.
+The system supports two forecasting horizons:
+- **Day-Ahead** forecasts for planning and market operations
+- **Intraday** forecasts for low-latency operational corrections
+
+Both horizons are implemented as part of **one unified ML platform**.
 
 ---
 
-## Architecture Overview
+## Design Goals
+- Realistic production architecture
+- Clear service boundaries
+- Full observability (logs, metrics, traces)
+- Automated training and retraining
+- Drift detection with explicit actions
+- Local development, cloud-ready deployment
 
-The system has two independent ML pipelines:
+This is **not a research project**.
+It is a **production system simulation**.
 
-### 1. Day-Ahead (DA) — Batch (PySpark)
-- **Cadence:** Once per day at cutoff time
-- **Features:** Slow-changing (yesterday’s load, tomorrow’s weather forecast, calendar)
-- **Processing:** PySpark batch jobs (Bronze → Silver → Gold DA)
-- **Feature Store:** Feast **Offline** (Parquet in MinIO/lakeFS)
-- **Serving:** Precomputes next day’s forecast → stores in Parquet + Kafka → served via `da-svc` (FastAPI) instantly
-- **Model:** `model_da` in MLflow Registry
+---
 
-### 2. Intraday (ID) — Streaming (PyFlink)
-- **Cadence:** Continuous; updates every 5–15 min
-- **Features:** Fast-changing (current load, latest weather nowcasts, updated market prices)
-- **Processing:** PyFlink streaming jobs → real-time feature calculation
-- **Feature Store:** Feast **Online** (Redis)
-- **Serving:** `id-svc` (FastAPI) pulls features from Redis → low-latency scoring in memory
-- **Model:** `model_id` in MLflow Registry
+## Forecasting Horizons
+
+### Day-Ahead Forecasting
+- Horizon: 24–48 hours
+- Update cadence: Daily
+- Latency tolerance: Minutes
+- Purpose: Planning, market bidding
+
+### Intraday Forecasting
+- Horizon: 15 minutes to 6 hours
+- Update cadence: Every 5–15 minutes
+- Latency tolerance: Seconds
+- Purpose: Operational correction and stability
+
+Intraday forecasts **correct the day-ahead baseline**, they do not replace it.
 
 ---
 
@@ -38,67 +50,97 @@ The system has two independent ML pipelines:
 
 ---
 
-## Data Flow (high level)
+## Technology Choices
 
-- **DA Path:**  
-  Bronze → PySpark (Silver) → PySpark (Gold DA) → Feast Offline → MLflow model → Batch inference → Stored forecast → API + Grafana
-- **ID Path:**  
-  Kafka → PyFlink → Feast Online (Redis) → FastAPI inference → Forecast → Grafana
-
----
-
-## 🛠️ Tech Stack
-
-| Layer                | Tooling |
-|----------------------|---------|
-| **Messaging**        | Kafka, Karapace Schema Registry |
-| **Batch Processing** | PySpark |
-| **Stream Processing**| PyFlink |
-| **Storage**          | MinIO (S3 API), lakeFS (versioning), Parquet |
-| **Feature Store**    | Feast (Offline = Parquet, Online = Redis) |
-| **Model Registry**   | MLflow Tracking + Registry |
-| **Orchestration**    | Airflow |
-| **Validation**       | Great Expectations |
-| **Drift Monitoring** | Evidently |
-| **Serving**          | FastAPI (`da-svc`, `id-svc`) |
-| **Observability**    | OpenTelemetry → Prometheus (metrics), Loki (logs), Tempo (traces), Grafana (dashboards + alerts) |
+| Layer | Technology | Reason |
+|---|---|---|
+| Object storage | MinIO (S3-compatible) | Local-first, cloud portable |
+| Lakehouse | Apache Iceberg | Industry standard, open |
+| Metadata / SQL | PostgreSQL | Simple, reliable |
+| Streaming backbone | Redpanda (Kafka API) | Kafka semantics, no ZooKeeper |
+| Intraday aggregation | **Apache Flink** | Event-time, state, lateness |
+| Batch compute | Spark | Feature engineering |
+| Online store | Redis | Low-latency reads |
+| Orchestration | Airflow | Industry-standard DAGs |
+| ML tracking | MLflow | Experiments + registry |
+| Observability | OpenTelemetry + Grafana stack | Unified telemetry |
 
 ---
 
-## Pipelines
+## Why Flink for Intraday
+Intraday forecasting requires:
+- Stateful windowed aggregation
+- Event-time correctness
+- Bounded lateness handling
+- Fault-tolerant state recovery
 
-### Day-Ahead (DA)
-1. **Ingestion:** Data arrives in Kafka → Lakehouse (Bronze)
-2. **Batch Prep:** PySpark → Silver → Gold DA
-3. **Validation:** Great Expectations on Silver/Gold
-4. **Feature Store:** Write Gold features to Feast Offline
-5. **Training:** Run daily/weekly; log to MLflow
-6. **Inference:** Load `model_da` from MLflow → predict → store forecast in Parquet + Kafka
-7. **Serving:** `da-svc` returns precomputed forecast
+Apache Flink provides these **natively**, avoiding custom re-implementation.
 
-### Intraday (ID)
-1. **Ingestion:** Data arrives in Kafka
-2. **Stream Processing:** PyFlink calculates real-time features → writes to Redis (Feast Online)
-3. **Serving:** `id-svc` pulls features from Redis → runs `model_id` in memory → returns predictions
-4. **(Optional)** Store ID forecasts in Kafka/Parquet for audit and dashboarding
-
----
-
-## Models
-
-- **`model_da`** — Day-Ahead  
-  Trained on Gold DA features from Feast Offline
-
-- **`model_id`** — Intraday  
-  Trained on historical Gold ID features backfilled from PyFlink outputs
-
-Both are versioned and promoted in **MLflow Registry** with guardrails.
+Flink is **used only for intraday aggregation**.
+Batch workloads remain on Spark.
 
 ---
 
 ## Observability
+All services emit:
+- **Traces** (request + pipeline spans)
+- **Metrics** (latency, throughput, freshness, model quality)
+- **Logs** with trace/span correlation
 
-- **Metrics:** Prometheus (pipeline durations, API latency, drift metrics)
-- **Logs:** Loki
-- **Traces:** Tempo (end-to-end spans from ingestion → serving)
-- **Dashboards & Alerts:** Grafana
+Telemetry flow:
+Service → OTEL SDK → OTEL Collector → Grafana (Tempo, Loki, Prometheus)
+
+---
+
+## Orchestration & MLOps
+Airflow DAGs automate:
+- Data ingestion
+- Feature generation
+- Day-ahead training and backtesting
+- Model promotion
+- Batch forecasting
+- Drift checks and automated actions
+
+---
+
+## Drift Detection & Actions
+Drift is monitored for:
+- Feature distributions
+- Prediction residuals
+- Data freshness and volume
+
+Actions include:
+- Alerting
+- Shadow evaluation
+- Rollback to last approved model
+- Triggered retraining
+
+---
+
+## Repository Structure
+- `platform/` – shared production utilities
+- `services/` – microservice-style components
+- `ml/` – reusable ML logic
+- `infra/` – local-first infrastructure
+- `monitoring/` – dashboards, alerts, SLOs
+- `docs/` – ADRs, architecture, runbooks
+
+---
+
+## Local-First, Cloud-Ready
+All services are containerized.
+Infrastructure is configurable via environment variables.
+
+Deployment to cloud platforms requires **no code changes**:
+only infrastructure configuration.
+
+---
+
+## Disclaimer
+This repository is a professional portfolio project.
+It does not represent a real utility deployment.
+
+---
+
+## Author
+Aman Kumar

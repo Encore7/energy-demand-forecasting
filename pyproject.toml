@@ -1,19 +1,38 @@
+[project]
+name = "energy-demand-forecasting"
+version = "0.1.0"
+description = "Production-grade day-ahead and intraday energy demand forecasting platform"
+requires-python = ">=3.10"
+
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "pydantic",
+  "sqlalchemy",
+  "psycopg2-binary",
+  "redis",
+  "kafka-python",
+  "mlflow",
+  "numpy",
+  "pandas",
+  "scikit-learn",
+  "lightgbm",
+  "pyarrow",
+  "apache-flink",
+  "opentelemetry-api",
+  "opentelemetry-sdk",
+  "opentelemetry-exporter-otlp",
+  "opentelemetry-instrumentation-fastapi",
+  "opentelemetry-instrumentation-requests"
+]
+
 [tool.ruff]
 line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = ["E","F","I","UP","B","N","PL","RUF"]
-ignore = ["D"]
+select = ["E", "F", "I"]
 
 [tool.mypy]
-python_version = "3.11"
+strict = true
 ignore_missing_imports = true
-strict_optional = true
-warn_unused_ignores = true
-warn_redundant_casts = true
-warn_unused_configs = true
 
 [tool.pytest.ini_options]
-testpaths = ["apps", "libs"]
-addopts = "-q"
+testpaths = ["tests"]
