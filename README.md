@@ -154,7 +154,7 @@ Design details are documented in:
 
 ---
 
-## Local-First, Cloud-Ready
+## Cloud-Ready(AWS/Azure/GCP)
 All components are containerized and configured via environment variables.
 
 Deploying to managed cloud services requires **no code changes** —
