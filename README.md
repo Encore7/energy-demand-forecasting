@@ -145,7 +145,7 @@ Design details are documented in:
 ---
 
 ## Repository Structure
-- `platform/` – shared production utilities (config, logging, tracing, metrics)
+- `libs/` – shared production utilities (config, logging, tracing, metrics)
 - `services/` – microservice-style runtime components
 - `ml/` – reusable ML logic (baselines, training, evaluation)
 - `infra/` – local-first infrastructure and observability stack

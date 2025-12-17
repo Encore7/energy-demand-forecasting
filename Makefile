@@ -1,39 +1,30 @@
-PROJECT_NAME=energy-demand-forecasting
-COMPOSE_FILE=infra/compose/docker-compose.yml
+SHELL := /bin/bash
+COMPOSE_FILE := infra/compose/docker-compose.yml
+ENV_FILE := .env
 
-.PHONY: help up down logs ps restart lint test fmt
+.PHONY: check-env up down restart ps logs pull clean
 
-help:
-	@echo "make up        - start all services"
-	@echo "make down      - stop all services"
-	@echo "make logs      - tail logs"
-	@echo "make ps        - list services"
-	@echo "make restart   - restart stack"
-	@echo "make lint      - run linters"
-	@echo "make test      - run tests"
-	@echo "make fmt       - format code"
+check-env:
+	@test -f $(ENV_FILE) || (echo "ERROR: $(ENV_FILE) not found. Create it from .env.example" && exit 1)
 
-up:
-	docker compose -f $(COMPOSE_FILE) up -d --build
+up: check-env
+	docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) up -d
 
-down:
-	docker compose -f $(COMPOSE_FILE) down -v
+down: check-env
+	docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) down
 
-logs:
-	docker compose -f $(COMPOSE_FILE) logs -f
+restart: check-env
+	docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) down
+	docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) up -d
 
-ps:
-	docker compose -f $(COMPOSE_FILE) ps
+ps: check-env
+	docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) ps
 
-restart:
-	make down && make up
+logs: check-env
+	docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) logs -f --tail=200
 
-lint:
-	ruff check .
-	mypy .
+pull: check-env
+	docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) pull
 
-fmt:
-	ruff format .
-
-test:
-	pytest -v
+clean: check-env
+	docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) down -v

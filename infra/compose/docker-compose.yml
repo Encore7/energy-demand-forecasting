@@ -1,392 +1,127 @@
-x-restart: &restart
-  restart: unless-stopped
-
-x-health: &health
-  interval: 10s
-  timeout: 5s
-  retries: 10
-  start_period: 20s
-
-x-logging: &logging
-  logging:
-    driver: "json-file"
-    options:
-      max-size: "10m"
-      max-file: "5"
+name: energy-demand-forecasting
 
 networks:
-  core:
+  obs-net:
     driver: bridge
 
 volumes:
-  minio-data: {}
-  lakefs-db: {}
-  airflow-db: {}
-  airflow-logs: {}
-  mlflow-db: {}
-  mlflow-artifacts: {}
-  redis-data: {}
-  kafka-data: {}
-  zookeeper-data: {}
-  zookeeper-log: {}
+  grafana_data:
+  prometheus_data:
+  tempo_data:
+  loki_data:
 
 services:
-  # ------------ Kafka stack ------------
-  zookeeper:
-    platform: linux/amd64
-    image: confluentinc/cp-zookeeper:7.6.1
-    <<: *restart
-    networks: [ core ]
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    healthcheck:
-      # TCP port-open check (works without nc/ruok)
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/2181"]
-      <<: *health
-    ports: [ "2181:2181" ]
-    volumes:
-      - zookeeper-data:/var/lib/zookeeper/data
-      - zookeeper-log:/var/lib/zookeeper/log
-
-  kafka:
-    platform: linux/amd64
-    image: confluentinc/cp-kafka:7.6.1
-    <<: *restart
-    depends_on:
-      zookeeper: { condition: service_healthy }
-    networks: [ core ]
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      # internal for containers + external for host tools
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,HOST://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,HOST://${HOST_IP}:9093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-    healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
-      <<: *health
+  grafana:
+    image: grafana/grafana:latest
+    container_name: edf-grafana
+    restart: unless-stopped
+    networks: [obs-net]
     ports:
-      - "9092:9092"   # containers
-      - "9093:9093"   # host tools
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_DEFAULT_THEME: "${GRAFANA_THEME:-dark}"
+      GF_LOG_LEVEL: "${OBS_LOG_LEVEL:-info}"
     volumes:
-      - kafka-data:/var/lib/kafka/data
-
-  schema-registry:
-    platform: linux/amd64
-    image: confluentinc/cp-schema-registry:7.6.1
-    <<: *restart
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
-      kafka: { condition: service_healthy }
-    networks: [ core ]
-    environment:
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
-      SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      - prometheus
+      - loki
+      - tempo
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/subjects || exit 1"]
-      <<: *health
-    ports: [ "8081:8081" ]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health | grep -q ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  kafka-ui:
-    platform: linux/amd64
-    profiles: [ ops ]  # enable with: docker compose --profile ops up -d
-    image: provectuslabs/kafka-ui:latest
-    <<: *restart
-    depends_on:
-      kafka: { condition: service_healthy }
-      schema-registry: { condition: service_healthy }
-    networks: [ core ]
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080 || exit 1"]
-      <<: *health
-    ports: [ "8085:8080" ]
-
-  # ------------ Storage / Lake ------------
-  minio:
-    image: minio/minio:latest
-    <<: *restart
-    command: server /data --console-address ":9001"
-    networks: [ core ]
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1"]
-      <<: *health
-    ports: [ "9000:9000", "9001:9001" ]
-    volumes: [ "minio-data:/data" ]
-
-  # one-shot bucket init
-  minio-init:
-    image: minio/mc
-    depends_on:
-      minio: { condition: service_healthy }
-    networks: [ core ]
-    entrypoint: ["/bin/sh","-c"]
-    command: >
-      "
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minio} ${MINIO_ROOT_PASSWORD:-minio123} &&
-      mc mb -p local/${MINIO_MLFLOW_BUCKET:-mlflow} || true &&
-      mc mb -p local/bronze || true &&
-      mc mb -p local/silver || true &&
-      mc mb -p local/gold || true &&
-      mc mb -p local/forecast || true
-      "
-    restart: "no"
-
-  lakefs-db:
-    image: postgres:16
-    <<: *restart
-    networks: [ core ]
-    environment:
-      POSTGRES_USER: ${LAKEFS_DB_USER}
-      POSTGRES_PASSWORD: ${LAKEFS_DB_PASSWORD}
-      POSTGRES_DB: ${LAKEFS_DB_NAME}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${LAKEFS_DB_USER} -d ${LAKEFS_DB_NAME}"]
-      <<: *health
-    volumes: [ "lakefs-db:/var/lib/postgresql/data" ]
-
-  lakefs:
-    image: treeverse/lakefs:latest
-    <<: *restart
-    depends_on:
-      minio: { condition: service_healthy }
-      lakefs-db: { condition: service_healthy }
-    networks: [ core ]
-    environment:
-      LAKEFS_DATABASE_TYPE: postgres
-      LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: postgres://${LAKEFS_DB_USER}:${LAKEFS_DB_PASSWORD}@lakefs-db:5432/${LAKEFS_DB_NAME}?sslmode=disable
-      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: ${LAKEFS_SECRET_KEY}
-      LAKEFS_BLOCKSTORE_TYPE: s3
-      LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
-      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://minio:9000
-      LAKEFS_BLOCKSTORE_S3_REGION: us-east-1
-      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      LAKEFS_LOGGING_FORMAT: json
-    ports: [ "8002:8000" ]
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health >/dev/null || exit 1"]
-      <<: *health
-
-  # ------------ Cache ------------
-  redis:
-    image: redis:7
-    <<: *restart
-    networks: [ core ]
-    command: ["redis-server", "--appendonly", "yes"]
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
-      <<: *health
-    ports: [ "6379:6379" ]
-    volumes: [ "redis-data:/data" ]
-
-  # ------------ MLflow (Postgres backend) ------------
-  mlflow-db:
-    image: postgres:16
-    <<: *restart
-    networks: [ core ]
-    environment:
-      POSTGRES_USER: ${MLFLOW_DB_USER}
-      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD}
-      POSTGRES_DB: ${MLFLOW_DB_NAME}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${MLFLOW_DB_USER} -d ${MLFLOW_DB_NAME}"]
-      <<: *health
-    volumes: [ "mlflow-db:/var/lib/postgresql/data" ]
-
-  mlflow:
-    image: ghcr.io/mlflow/mlflow:latest
-    <<: *restart
-    depends_on:
-      minio: { condition: service_healthy }
-      mlflow-db: { condition: service_healthy }
-      minio-init: { condition: service_started }
-    networks: [ core ]
-    environment:
-      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
-    command: >
-      bash -lc "
-        python -m pip install --no-cache-dir psycopg2-binary==2.9.9 &&
-        mlflow server
-        --backend-store-uri postgresql+psycopg2://${MLFLOW_DB_USER}:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/${MLFLOW_DB_NAME}
-        --default-artifact-root s3://${MINIO_MLFLOW_BUCKET}
-        --host 0.0.0.0 --port 5000
-      "
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:5000 || exit 1"]
-      <<: *health
-    ports: [ "5050:5000" ]  # host:container
-    volumes: [ "mlflow-artifacts:/mlruns" ]
-
-  # ------------ Airflow (Celery executor) ------------
-  airflow-db:
-    image: postgres:16
-    <<: *restart
-    networks: [ core ]
-    environment:
-      POSTGRES_USER: ${AIRFLOW_DB_USER}
-      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
-      POSTGRES_DB: ${AIRFLOW_DB_NAME}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER} -d ${AIRFLOW_DB_NAME}"]
-      <<: *health
-    volumes: [ "airflow-db:/var/lib/postgresql/data" ]
-
-  airflow-webserver:
-    image: apache/airflow:2.9.3
-    <<: [*restart, *logging]
-    depends_on:
-      airflow-db: { condition: service_healthy }
-      redis: { condition: service_healthy }
-    networks: [ core ]
-    environment:
-      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-      AIRFLOW__WEBSERVER__BASE_URL: http://localhost:8080
-      AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT: "False"
-      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/${AIRFLOW_DB_NAME}
-      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql:///${AIRFLOW_DB_NAME}?host=airflow-db&user=${AIRFLOW_DB_USER}&password=${AIRFLOW_DB_PASSWORD}
-      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USERNAME}
-      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
-      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-      TZ: ${TZ}
-    command: >
-      bash -lc "
-        airflow db migrate &&
-        airflow users create --username \"${AIRFLOW_ADMIN_USERNAME}\" --password \"${AIRFLOW_ADMIN_PASSWORD}\" --firstname A --lastname D --role Admin --email admin@example.com || true &&
-        exec airflow webserver
-      "
-    healthcheck:
-      test: ["CMD", "bash", "-lc", "curl -fsS http://localhost:8080/health || exit 1"]
-      <<: *health
-    ports: [ "8080:8080" ]
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: edf-prometheus
+    restart: unless-stopped
+    networks: [obs-net]
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yaml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
     volumes:
-      - ../../dags:/opt/airflow/dags
-      - airflow-logs:/opt/airflow/logs
+      - prometheus_data:/prometheus
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready | grep -q Prometheus"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  airflow-scheduler:
-    image: apache/airflow:2.9.3
-    <<: [*restart, *logging]
-    depends_on:
-      airflow-db: { condition: service_healthy }
-      airflow-webserver: { condition: service_started }
-      redis: { condition: service_healthy }
-    networks: [ core ]
-    environment:
-      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/${AIRFLOW_DB_NAME}
-      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql:///${AIRFLOW_DB_NAME}?host=airflow-db&user=${AIRFLOW_DB_USER}&password=${AIRFLOW_DB_PASSWORD}
-      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-      TZ: ${TZ}
-    command: scheduler
+  tempo:
+    image: grafana/tempo:latest
+    container_name: edf-tempo
+    restart: unless-stopped
+    networks: [obs-net]
+    ports:
+      - "${TEMPO_PORT:-3200}:3200"
+    command: ["-config.file=/etc/tempo.yaml"]
     volumes:
-      - ../../dags:/opt/airflow/dags
-      - airflow-logs:/opt/airflow/logs
+      - tempo_data:/var/tempo
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready | grep -q ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  airflow-worker:
-    image: apache/airflow:2.9.3
-    <<: [*restart, *logging]
-    depends_on:
-      airflow-db: { condition: service_healthy }
-      redis: { condition: service_healthy }
-    networks: [ core ]
-    environment:
-      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/${AIRFLOW_DB_NAME}
-      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql:///${AIRFLOW_DB_NAME}?host=airflow-db&user=${AIRFLOW_DB_USER}&password=${AIRFLOW_DB_PASSWORD}
-      TZ: ${TZ}
-    command: celery worker
+  loki:
+    image: grafana/loki:latest
+    container_name: edf-loki
+    restart: unless-stopped
+    networks: [obs-net]
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    command: ["-config.file=/etc/loki.yaml"]
     volumes:
-      - ../../dags:/opt/airflow/dags
-      - airflow-logs:/opt/airflow/logs
+      - loki_data:/loki
+      - ./loki.yaml:/etc/loki.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready | grep -q ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  # ------------ Observability ------------
+  promtail:
+    image: grafana/promtail:latest
+    container_name: edf-promtail
+    restart: unless-stopped
+    networks: [obs-net]
+    command: ["-config.file=/etc/promtail.yaml"]
+    volumes:
+      - ./promtail.yaml:/etc/promtail.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.108.0
-    <<: *restart
-    networks: [ core ]
-    environment:
-      OTLP_ENDPOINT: ${OTLP_ENDPOINT}
-      OTLP_TOKEN: ${OTLP_TOKEN}
-    volumes:
-      - ./otel/otel-collector-config.yml:/etc/otelcol/config.yaml:ro
-    healthcheck:
-      test: ["CMD", "bash", "-lc", "otelcol-contrib --version >/dev/null 2>&1 || exit 1"]
-      <<: *health
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: edf-otel-collector
+    restart: unless-stopped
+    networks: [obs-net]
     ports:
-      - "4317:4317"  # gRPC
-      - "4318:4318"  # HTTP
-
-  # ------------ Your microservices ------------
-  da-svc:
-    build:
-      context: ../..
-      dockerfile: apps/da-svc/Dockerfile
-    <<: [*restart, *logging]
+      - "${OTEL_GRPC_PORT:-4317}:4317"  # OTLP gRPC receiver
+      - "${OTEL_HTTP_PORT:-4318}:4318"  # OTLP HTTP receiver
+      - "${OTEL_HEALTH_PORT:-13133}:13133" # health_check
+      - "${OTEL_INTERNAL_METRICS_PORT:-8888}:8888" # collector internal metrics
+      - "${OTEL_PROM_EXPORTER_PORT:-8889}:8889" # Prometheus exporter endpoint
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
     depends_on:
-      otel-collector: { condition: service_started }
-      redis: { condition: service_healthy }
-      minio: { condition: service_healthy }
-    networks: [ core ]
-    environment:
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
-      OTLP_ENDPOINT: ""
-      OTLP_TOKEN: ""
-      PROJECT_NAME: ${PROJECT_NAME}
-      MLFLOW_TRACKING_URI: http://mlflow:5000
-      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      - tempo
+      - loki
     healthcheck:
-      test: ["CMD", "bash", "-lc", "curl -fsS http://localhost:8000/health || exit 1"]
-      <<: *health
-    ports: [ "8000:8000" ]
-    deploy:
-      resources:
-        limits: { cpus: "2.0", memory: 2g }
-        reservations: { cpus: "0.5", memory: 512m }
-
-  id-svc:
-    build:
-      context: ../..
-      dockerfile: apps/id-svc/Dockerfile
-    <<: [*restart, *logging]
-    depends_on:
-      otel-collector: { condition: service_started }
-      redis: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-    networks: [ core ]
-    environment:
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
-      OTLP_ENDPOINT: ""
-      OTLP_TOKEN: ""
-      PROJECT_NAME: ${PROJECT_NAME}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      KAFKA_BROKERS: kafka:9092
-      SCHEMA_REGISTRY_URL: http://schema-registry:8081
-    healthcheck:
-      test: ["CMD", "bash", "-lc", "curl -fsS http://localhost:8001/health || exit 1"]
-      <<: *health
-    ports: [ "8001:8001" ]
-    deploy:
-      resources:
-        limits: { cpus: "2.0", memory: 2g }
-        reservations: { cpus: "0.5", memory: 512m }
+      test: ["CMD-SHELL", "wget -qO- http://localhost:13133/ | grep -q OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 10

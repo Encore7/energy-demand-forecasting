@@ -1,11 +1,37 @@
 global:
-  scrape_interval: 10s
+  scrape_interval: 15s
+  evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: "otel-collector"
+  # Prometheus itself
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  # OpenTelemetry Collector (its own internal metrics)
+  - job_name: otel-collector-internal
+    static_configs:
+      - targets: ["otel-collector:8888"]
+
+  # OTel Collector Prometheus Exporter (metrics coming from services via OTLP)
+  - job_name: otel-collector-exporter
     static_configs:
       - targets: ["otel-collector:8889"]
 
-  - job_name: "prometheus"
+  # Tempo metrics (optional)
+  - job_name: tempo
     static_configs:
-      - targets: ["prometheus:9090"]
+      - targets: ["tempo:3200"]
+
+  # Loki metrics (optional)
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+
+  # ---- Add services here once we run them on the same network ----
+  # If each FastAPI service exposes /metrics (Prometheus format), add:
+  #
+  # - job_name: api_gateway
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets: ["api_gateway:8000"]

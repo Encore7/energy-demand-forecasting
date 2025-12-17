@@ -1,38 +1,37 @@
 [project]
 name = "energy-demand-forecasting"
 version = "0.1.0"
-description = "Production-grade day-ahead and intraday energy demand forecasting platform"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
+dependencies = []
 
-dependencies = [
-  "fastapi",
-  "uvicorn",
-  "pydantic",
-  "sqlalchemy",
-  "psycopg2-binary",
-  "redis",
-  "kafka-python",
-  "mlflow",
-  "numpy",
-  "pandas",
-  "scikit-learn",
-  "lightgbm",
-  "pyarrow",
-  "apache-flink",
-  "opentelemetry-api",
-  "opentelemetry-sdk",
-  "opentelemetry-exporter-otlp",
-  "opentelemetry-instrumentation-fastapi",
-  "opentelemetry-instrumentation-requests"
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.6",
+  "mypy>=1.10",
+  "pytest>=8.2",
+  "pytest-cov>=5.0",
+  "types-PyYAML",
 ]
 
 [tool.ruff]
 line-length = 100
-select = ["E", "F", "I"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "N"]
+ignore = ["E501"]
 
 [tool.mypy]
+python_version = "3.11"
 strict = true
-ignore_missing_imports = true
+warn_unused_configs = true
+disallow_any_generics = true
+no_implicit_optional = true
+warn_return_any = true
+warn_unused_ignores = true
+show_error_codes = true
+pretty = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "services"]
+addopts = "-q"
