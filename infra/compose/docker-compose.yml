@@ -125,3 +125,60 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  api_gateway:
+    build:
+      context: .
+      dockerfile: services/api_gateway/Dockerfile
+    container_name: edf-api-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+
+      OTEL_SERVICE_NAMESPACE: ${OTEL_SERVICE_NAMESPACE:-energy-demand-forecasting}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
+      OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-none}
+      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-10}
+
+      API_GATEWAY_API_KEYS: ${API_GATEWAY_API_KEYS:-dev-key-123}
+      API_GATEWAY_RATE_LIMIT_ENABLED: ${API_GATEWAY_RATE_LIMIT_ENABLED:-true}
+      API_GATEWAY_RATE_LIMIT_RPM: ${API_GATEWAY_RATE_LIMIT_RPM:-120}
+      API_GATEWAY_RATE_LIMIT_BURST: ${API_GATEWAY_RATE_LIMIT_BURST:-60}
+    depends_on:
+      - otel-collector
+      - feature_store
+    networks:
+      - edf-net
+
+  feature_store:
+    build:
+      context: .
+      dockerfile: services/feature_store/Dockerfile
+    container_name: edf-feature-store
+    restart: unless-stopped
+    # optional: expose for direct debugging (not required)
+    # ports:
+    #   - "8001:8000"
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+
+      OTEL_SERVICE_NAMESPACE: ${OTEL_SERVICE_NAMESPACE:-energy-demand-forecasting}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
+      OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-none}
+      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-10}
+    depends_on:
+      - otel-collector
+    networks:
+      - edf-net
