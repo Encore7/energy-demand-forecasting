@@ -29,6 +29,15 @@ The diagram shows the full end-to-end platform, including:
 
 ---
 
+## Data Contracts & Time Semantics
+
+- All timestamps normalized to Europe/Berlin
+- DST transitions handled explicitly
+- Intraday features computed in event time
+- Point-in-time correctness enforced for training and inference
+
+---
+
 ## Major Components
 
 ### Data Sources
