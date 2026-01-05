@@ -15,6 +15,17 @@ and `architecture.md`.
 
 ---
 
+## Problem Framing
+
+This system forecasts Germany-wide electricity demand with two horizons:
+- Day-ahead (hourly, batch)
+- Intraday (15-min resolution, refreshed every 15 minutes, 6h horizon)
+
+Forecasts are probabilistic by default (P10/P50/P90) and evaluated via
+rolling-origin backtesting using pinball loss.
+
+---
+
 ## Why Two Forecasting Horizons
 
 ### Day-Ahead
@@ -38,6 +49,14 @@ Batch and streaming pipelines solve fundamentally different problems:
 - Streaming processing optimizes for freshness and responsiveness
 
 Combining both avoids overloading a single paradigm.
+
+---
+
+## Forecasting Execution Model
+
+- Streaming pipelines are used to continuously materialize features.
+- Intraday inference runs on a fixed **15-minute schedule**, not per event.
+- This design ensures deterministic outputs, simpler rollback, and auditable forecasts.
 
 ---
 
@@ -89,6 +108,16 @@ Feature definitions are treated as contracts.
 - Versioned model registry
 - Explicit promotion and rollback points
 - Integration with batch training workflows
+
+---
+
+## Evaluation & Backtesting Strategy
+
+- Rolling-origin evaluation
+- Leakage-safe feature alignment
+- Primary metric: pinball loss (P10/P50/P90)
+- Secondary: MAE, RMSE, sMAPE
+- Segment-based evaluation (peaks, seasons, holidays)
 
 ---
 

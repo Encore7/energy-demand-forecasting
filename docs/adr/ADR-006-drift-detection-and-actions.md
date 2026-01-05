@@ -1,15 +1,18 @@
 # ADR-006: Drift Detection & Actions
 
 ## Decision
-Implement drift as a first-class service.
+Drift detection is implemented as a **first-class ML system capability**.
 
 ## Drift Types
 - Feature distribution drift
 - Prediction residual drift
-- Data freshness anomalies
+- Data freshness / volume anomalies
 
 ## Actions
 - Alert
 - Shadow evaluation
-- Rollback
-- Retraining
+- Model rollback
+- Retraining trigger
+
+## Invariant
+Drift detection applies to **both** day-ahead and intraday pipelines independently.

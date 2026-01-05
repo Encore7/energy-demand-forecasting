@@ -2,14 +2,15 @@
 
 ## Data Assumptions
 - Demand data may arrive late or out-of-order
-- Weather forecasts are probabilistic and imperfect
-- Small inaccuracies are acceptable at intraday scale
+- Intraday data arrives at 15-minute granularity
+- Weather inputs are probabilistic and imperfect
 
 ## Modeling Assumptions
-- Baseline models provide acceptable performance
-- Intraday models correct residuals, not replace baselines
+- Classical baselines provide reasonable performance
+- ML/DL models improve residuals and uncertainty estimates
+- Intraday models act as **correction layers**, not replacements
 
 ## Operational Constraints
-- Local development environment
-- Open-source tooling only
-- Cloud deployment is optional, not required
+- Local-first development
+- Open-source tooling
+- Cloud deployment optional but architecture-compatible
