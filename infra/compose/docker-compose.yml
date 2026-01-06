@@ -70,7 +70,7 @@ services:
       - "--web.enable-lifecycle"
     volumes:
       - prometheus_data:/prometheus
-      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready | grep -q Prometheus"]
       interval: 10s
@@ -87,7 +87,7 @@ services:
     command: ["-config.file=/etc/tempo.yaml"]
     volumes:
       - tempo_data:/var/tempo
-      - ./tempo.yaml:/etc/tempo.yaml:ro
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready | grep -q ready"]
       interval: 10s
@@ -104,7 +104,7 @@ services:
     command: ["-config.file=/etc/loki.yaml"]
     volumes:
       - loki_data:/loki
-      - ./loki.yaml:/etc/loki.yaml:ro
+      - ./observability/loki.yaml:/etc/loki.yaml:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready | grep -q ready"]
       interval: 10s
@@ -118,7 +118,7 @@ services:
     networks: [obs-net]
     command: ["-config.file=/etc/promtail.yaml"]
     volumes:
-      - ./promtail.yaml:/etc/promtail.yaml:ro
+      - ./observability/promtail.yaml:/etc/promtail.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - loki
@@ -136,7 +136,7 @@ services:
       - "${OTEL_PROM_EXPORTER_PORT:-8889}:8889"
     command: ["--config=/etc/otel-collector.yaml"]
     volumes:
-      - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
+      - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
     depends_on:
       - tempo
       - loki
