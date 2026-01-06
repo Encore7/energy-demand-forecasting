@@ -3,14 +3,34 @@ name: energy-demand-forecasting
 networks:
   obs-net:
     driver: bridge
+  plat-net:
+    driver: bridge
+  airflow-net:
+    driver: bridge
+  spark-net:
+    driver: bridge
 
 volumes:
+  # Observability
   grafana_data:
   prometheus_data:
   tempo_data:
   loki_data:
 
+  # Airflow
+  airflow_postgres_data:
+  airflow_logs:
+
+  # Platform (data + stores)
+  minio_data:
+  lakefs_data:
+  feast_postgres_data:
+  forecast_postgres_data:
+  mlflow_data:
+
 services:
+
+  # Observability (Grafana stack)
   grafana:
     image: grafana/grafana:latest
     container_name: edf-grafana
@@ -109,11 +129,11 @@ services:
     restart: unless-stopped
     networks: [obs-net]
     ports:
-      - "${OTEL_GRPC_PORT:-4317}:4317"  # OTLP gRPC receiver
-      - "${OTEL_HTTP_PORT:-4318}:4318"  # OTLP HTTP receiver
-      - "${OTEL_HEALTH_PORT:-13133}:13133" # health_check
-      - "${OTEL_INTERNAL_METRICS_PORT:-8888}:8888" # collector internal metrics
-      - "${OTEL_PROM_EXPORTER_PORT:-8889}:8889" # Prometheus exporter endpoint
+      - "${OTEL_GRPC_PORT:-4317}:4317"
+      - "${OTEL_HTTP_PORT:-4318}:4318"
+      - "${OTEL_HEALTH_PORT:-13133}:13133"
+      - "${OTEL_INTERNAL_METRICS_PORT:-8888}:8888"
+      - "${OTEL_PROM_EXPORTER_PORT:-8889}:8889"
     command: ["--config=/etc/otel-collector.yaml"]
     volumes:
       - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
@@ -126,59 +146,258 @@ services:
       timeout: 5s
       retries: 10
 
-  api_gateway:
-    build:
-      context: .
-      dockerfile: services/api_gateway/Dockerfile
-    container_name: edf-api-gateway
+  # Data Platform (MinIO + LakeFS)
+  minio:
+    image: minio/minio:latest
+    container_name: edf-minio
     restart: unless-stopped
+    networks: [plat-net]
     ports:
-      - "8000:8000"
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
-      ENVIRONMENT: ${ENVIRONMENT:-local}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minio}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minio12345}"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/minio/health/ready | grep -q OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-      OTEL_SERVICE_NAMESPACE: ${OTEL_SERVICE_NAMESPACE:-energy-demand-forecasting}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
-      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
-      OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-otlp}
-      OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-none}
-      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-10}
-
-      API_GATEWAY_API_KEYS: ${API_GATEWAY_API_KEYS:-dev-key-123}
-      API_GATEWAY_RATE_LIMIT_ENABLED: ${API_GATEWAY_RATE_LIMIT_ENABLED:-true}
-      API_GATEWAY_RATE_LIMIT_RPM: ${API_GATEWAY_RATE_LIMIT_RPM:-120}
-      API_GATEWAY_RATE_LIMIT_BURST: ${API_GATEWAY_RATE_LIMIT_BURST:-60}
-    depends_on:
-      - otel-collector
-      - feature_store
-    networks:
-      - edf-net
-
-  feature_store:
-    build:
-      context: .
-      dockerfile: services/feature_store/Dockerfile
-    container_name: edf-feature-store
+  lakefs-postgres:
+    image: postgres:15
+    container_name: edf-lakefs-postgres
     restart: unless-stopped
-    # optional: expose for direct debugging (not required)
-    # ports:
-    #   - "8001:8000"
+    networks: [plat-net]
     environment:
-      ENVIRONMENT: ${ENVIRONMENT:-local}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
+      POSTGRES_USER: lakefs
+      POSTGRES_PASSWORD: lakefs
+      POSTGRES_DB: lakefs
+    volumes:
+      - lakefs_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "lakefs"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
-      OTEL_SERVICE_NAMESPACE: ${OTEL_SERVICE_NAMESPACE:-energy-demand-forecasting}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
-      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
-      OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-otlp}
-      OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-none}
-      OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-10}
+  lakefs:
+    image: treeverse/lakefs:latest
+    container_name: edf-lakefs
+    restart: unless-stopped
+    networks: [plat-net]
+    ports:
+      - "${LAKEFS_PORT:-8000}:8000"
     depends_on:
-      - otel-collector
-    networks:
-      - edf-net
+      lakefs-postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: "${LAKEFS_SECRET_KEY:-dev-secret-dev-secret-dev-secret-1234}"
+      LAKEFS_DATABASE_TYPE: postgres
+      LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: "postgres://lakefs:lakefs@lakefs-postgres:5432/lakefs?sslmode=disable"
+      LAKEFS_BLOCKSTORE_TYPE: s3
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: "http://minio:9000"
+      LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: "${MINIO_ROOT_USER:-minio}"
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD:-minio12345}"
+      LAKEFS_BLOCKSTORE_S3_REGION: "us-east-1"
+
+  # Stores: Feast offline + Forecast store
+  feast-postgres:
+    image: postgres:15
+    container_name: edf-feast-postgres
+    restart: unless-stopped
+    networks: [plat-net]
+    environment:
+      POSTGRES_USER: feast
+      POSTGRES_PASSWORD: feast
+      POSTGRES_DB: feast
+    ports:
+      - "${FEAST_PG_PORT:-5432}:5432"
+    volumes:
+      - feast_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "feast"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  forecast-postgres:
+    image: postgres:15
+    container_name: edf-forecast-postgres
+    restart: unless-stopped
+    networks: [plat-net]
+    environment:
+      POSTGRES_USER: forecast
+      POSTGRES_PASSWORD: forecast
+      POSTGRES_DB: forecast
+    ports:
+      - "${FORECAST_PG_PORT:-5434}:5432"
+    volumes:
+      - forecast_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "forecast"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Online store
+  redis:
+    image: redis:7
+    container_name: edf-redis
+    restart: unless-stopped
+    networks: [plat-net]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  # MLflow (tracking + registry)
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: edf-mlflow
+    restart: unless-stopped
+    networks: [plat-net, obs-net]
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    environment:
+      MLFLOW_TRACKING_URI: "http://0.0.0.0:5000"
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+    volumes:
+      - mlflow_data:/mlflow
+
+  # Spark (for feature + transform jobs)
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: edf-spark-master
+    restart: unless-stopped
+    networks: [spark-net, plat-net]
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "${SPARK_MASTER_UI_PORT:-8081}:8080"
+      - "${SPARK_MASTER_PORT:-7077}:7077"
+
+  spark-worker:
+    image: bitnami/spark:3.5
+    container_name: edf-spark-worker
+    restart: unless-stopped
+    networks: [spark-net, plat-net]
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    depends_on:
+      - spark-master
+
+  # Airflow (LocalExecutor for local dev)
+  airflow-postgres:
+    image: postgres:15
+    container_name: edf-airflow-postgres
+    restart: unless-stopped
+    networks: [airflow-net]
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "${AIRFLOW_PG_PORT:-5433}:5432"
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  airflow-init:
+    build:
+      context: ../..
+      dockerfile: infra/airflow/Dockerfile
+    container_name: edf-airflow-init
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    networks: [airflow-net, plat-net, spark-net, obs-net]
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: "60"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "dev-secret-key"
+      AIRFLOW__CORE__FERNET_KEY: "00000000000000000000000000000000"
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Berlin
+      PYTHONPATH: /opt/edf
+      # handy endpoints for tasks
+      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    volumes:
+      - ../../:/opt/edf
+      - airflow_logs:/opt/airflow/logs
+    entrypoint: /bin/bash
+    command: >
+      -c "
+      airflow db migrate &&
+      airflow users create
+        --username admin
+        --password admin
+        --firstname Admin
+        --lastname User
+        --role Admin
+        --email admin@example.com
+      || true
+      "
+
+  airflow-webserver:
+    build:
+      context: ../..
+      dockerfile: infra/airflow/Dockerfile
+    container_name: edf-airflow-webserver
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    networks: [airflow-net, plat-net, spark-net, obs-net]
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "dev-secret-key"
+      AIRFLOW__CORE__FERNET_KEY: "00000000000000000000000000000000"
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Berlin
+      PYTHONPATH: /opt/edf
+    volumes:
+      - ../../:/opt/edf
+      - airflow_logs:/opt/airflow/logs
+    ports:
+      - "${AIRFLOW_PORT:-8080}:8080"
+    command: webserver
+
+  airflow-scheduler:
+    build:
+      context: ../..
+      dockerfile: infra/airflow/Dockerfile
+    container_name: edf-airflow-scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    networks: [airflow-net, plat-net, spark-net, obs-net]
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Berlin
+      PYTHONPATH: /opt/edf
+    volumes:
+      - ../../:/opt/edf
+      - airflow_logs:/opt/airflow/logs
+    command: scheduler
