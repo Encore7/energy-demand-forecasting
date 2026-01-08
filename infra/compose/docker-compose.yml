@@ -293,28 +293,27 @@ services:
 
   # Spark (for feature + transform jobs)
   spark-master:
-    <<: *common-env
-    image: bitnami/spark:3.5
-    container_name: edf-spark-master
+    platform: linux/amd64
+    image: bde2020/spark-master:3.3.0-hadoop3.3
+    container_name: spark-master
     restart: unless-stopped
     networks: [spark-net, plat-net]
-    environment:
-      - SPARK_MODE=master
     ports:
-      - "${SPARK_MASTER_UI_PORT}:8080"
-      - "${SPARK_MASTER_PORT}:7077"
+      - "${SPARK_MASTER_UI_PORT:-8081}:8080"
+      - "${SPARK_MASTER_PORT:-7077}:7077"
+    environment:
+      - INIT_DAEMON_STEP=setup_spark
 
   spark-worker:
-    <<: *common-env
-    image: bitnami/spark:3.5
-    container_name: edf-spark-worker
+    platform: linux/amd64
+    image: bde2020/spark-worker:3.3.0-hadoop3.3
+    container_name: spark-worker
     restart: unless-stopped
     networks: [spark-net, plat-net]
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=${SPARK_MASTER_URL}
     depends_on:
       - spark-master
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
 
   # Airflow (LocalExecutor for local dev)
   airflow-postgres:
@@ -362,19 +361,10 @@ services:
     volumes:
       - ../../:/opt/edf
       - airflow_logs:/opt/airflow/logs
-    entrypoint: /bin/bash
-    command: >
-      -c "
-      airflow db migrate &&
-      airflow users create
-        --username admin
-        --password admin
-        --firstname Admin
-        --lastname User
-        --role Admin
-        --email admin@example.com
-      || true
-      "
+    command:
+      - bash
+      - -c
+      - airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true
 
   airflow-webserver:
     <<: *common-env

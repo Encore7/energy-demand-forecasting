@@ -162,6 +162,16 @@ only infrastructure configuration.
 
 ---
 
+# How to run:
+- Ingestion:
+
+  ```
+  cd root/infra/compose
+  docker compose up -d
+  ```
+
+---
+
 ## Disclaimer
 This repository is a professional portfolio project.
 It does not represent a real utility deployment.

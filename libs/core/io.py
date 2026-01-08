@@ -6,26 +6,27 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class LakeFSLocation:
     """
-    Spark-friendly lakeFS URI pattern via S3 gateway:
+    LakeFS location helper.
 
-      s3a://{repo}/{branch}/{path}
-
-    Example:
-      s3a://energy/main/bronze/demand/ingestion_date=2026-01-07/
+    - For Spark (s3a):   s3a://{repo}/{branch}/{path}
+    - For s3fs/pyarrow:  {repo}/{branch}/{path}
+    - For boto3 keys:    {branch}/{path}
     """
 
     repo: str
     branch: str
 
     def uri(self, path: str) -> str:
+        """Spark-friendly S3A URI."""
         path = path.lstrip("/")
         return f"s3a://{self.repo}/{self.branch}/{path}"
 
+    def dataset_path(self, path: str) -> str:
+        """Path for pyarrow.dataset(..., filesystem=s3fs)."""
+        path = path.lstrip("/")
+        return f"{self.repo}/{self.branch}/{path}"
 
-def bronze_demand_prefix(dt: str) -> str:
-    # dt is YYYY-MM-DD
-    return f"bronze/demand/ingestion_date={dt}/"
-
-
-def silver_demand_prefix(dt: str) -> str:
-    return f"silver/demand/dt={dt}/"
+    def key(self, path: str) -> str:
+        """Key for boto3 S3 operations (Bucket=self.repo, Key=...)."""
+        path = path.lstrip("/")
+        return f"{self.branch}/{path}"

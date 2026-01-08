@@ -1,0 +1,29 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  # OpenTelemetry Collector (its own internal metrics)
+  - job_name: otel-collector-internal
+    static_configs:
+      - targets: ["otel-collector:8888"]
+
+  # OTel Collector Prometheus Exporter (metrics coming from services via OTLP)
+  - job_name: otel-collector-exporter
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # Tempo metrics
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]
+
+  # Loki metrics
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
