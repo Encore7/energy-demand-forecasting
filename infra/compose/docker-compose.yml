@@ -1,5 +1,9 @@
 name: energy-demand-forecasting
 
+x-common-env: &common-env
+  env_file:
+    - .env
+
 networks:
   obs-net:
     driver: bridge
@@ -32,17 +36,18 @@ services:
 
   # Observability (Grafana stack)
   grafana:
+    <<: *common-env
     image: grafana/grafana:latest
     container_name: edf-grafana
     restart: unless-stopped
     networks: [obs-net]
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - "${GRAFANA_PORT}:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
-      GF_USERS_DEFAULT_THEME: "${GRAFANA_THEME:-dark}"
-      GF_LOG_LEVEL: "${OBS_LOG_LEVEL:-info}"
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
+      GF_USERS_DEFAULT_THEME: "${GRAFANA_THEME}"
+      GF_LOG_LEVEL: "${LOG_LEVEL}"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
@@ -58,12 +63,13 @@ services:
       retries: 10
 
   prometheus:
+    <<: *common-env
     image: prom/prometheus:latest
     container_name: edf-prometheus
     restart: unless-stopped
     networks: [obs-net]
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      - "${PROMETHEUS_PORT}:9090"
     command:
       - "--config.file=/etc/prometheus/prometheus.yaml"
       - "--storage.tsdb.path=/prometheus"
@@ -78,12 +84,13 @@ services:
       retries: 10
 
   tempo:
+    <<: *common-env
     image: grafana/tempo:latest
     container_name: edf-tempo
     restart: unless-stopped
     networks: [obs-net]
     ports:
-      - "${TEMPO_PORT:-3200}:3200"
+      - "${TEMPO_PORT}:3200"
     command: ["-config.file=/etc/tempo.yaml"]
     volumes:
       - tempo_data:/var/tempo
@@ -95,12 +102,13 @@ services:
       retries: 10
 
   loki:
+    <<: *common-env
     image: grafana/loki:latest
     container_name: edf-loki
     restart: unless-stopped
     networks: [obs-net]
     ports:
-      - "${LOKI_PORT:-3100}:3100"
+      - "${LOKI_PORT}:3100"
     command: ["-config.file=/etc/loki.yaml"]
     volumes:
       - loki_data:/loki
@@ -112,6 +120,7 @@ services:
       retries: 10
 
   promtail:
+    <<: *common-env
     image: grafana/promtail:latest
     container_name: edf-promtail
     restart: unless-stopped
@@ -124,16 +133,17 @@ services:
       - loki
 
   otel-collector:
+    <<: *common-env
     image: otel/opentelemetry-collector-contrib:latest
     container_name: edf-otel-collector
     restart: unless-stopped
     networks: [obs-net]
     ports:
-      - "${OTEL_GRPC_PORT:-4317}:4317"
-      - "${OTEL_HTTP_PORT:-4318}:4318"
-      - "${OTEL_HEALTH_PORT:-13133}:13133"
-      - "${OTEL_INTERNAL_METRICS_PORT:-8888}:8888"
-      - "${OTEL_PROM_EXPORTER_PORT:-8889}:8889"
+      - "${OTEL_GRPC_PORT}:4317"
+      - "${OTEL_HTTP_PORT}:4318"
+      - "${OTEL_HEALTH_PORT}:13133"
+      - "${OTEL_INTERNAL_METRICS_PORT}:8888"
+      - "${OTEL_PROM_EXPORTER_PORT}:8889"
     command: ["--config=/etc/otel-collector.yaml"]
     volumes:
       - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
@@ -148,16 +158,17 @@ services:
 
   # Data Platform (MinIO + LakeFS)
   minio:
+    <<: *common-env
     image: minio/minio:latest
     container_name: edf-minio
     restart: unless-stopped
     networks: [plat-net]
     ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${MINIO_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
     environment:
-      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minio}"
-      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minio12345}"
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD}"
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -168,6 +179,7 @@ services:
       retries: 10
 
   lakefs-postgres:
+    <<: *common-env
     image: postgres:15
     container_name: edf-lakefs-postgres
     restart: unless-stopped
@@ -185,40 +197,42 @@ services:
       retries: 20
 
   lakefs:
+    <<: *common-env
     image: treeverse/lakefs:latest
     container_name: edf-lakefs
     restart: unless-stopped
     networks: [plat-net]
     ports:
-      - "${LAKEFS_PORT:-8000}:8000"
+      - "${LAKEFS_PORT}:8000"
     depends_on:
       lakefs-postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
     environment:
-      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: "${LAKEFS_SECRET_KEY:-dev-secret-dev-secret-dev-secret-1234}"
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: "${LAKEFS_SECRET_KEY}"
       LAKEFS_DATABASE_TYPE: postgres
       LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: "postgres://lakefs:lakefs@lakefs-postgres:5432/lakefs?sslmode=disable"
       LAKEFS_BLOCKSTORE_TYPE: s3
-      LAKEFS_BLOCKSTORE_S3_ENDPOINT: "http://minio:9000"
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: "${S3_ENDPOINT}"
       LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
-      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: "${MINIO_ROOT_USER:-minio}"
-      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD:-minio12345}"
-      LAKEFS_BLOCKSTORE_S3_REGION: "us-east-1"
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: "${MINIO_ROOT_USER}"
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
+      LAKEFS_BLOCKSTORE_S3_REGION: "${S3_REGION}"
 
   # Stores: Feast offline + Forecast store
   feast-postgres:
+    <<: *common-env
     image: postgres:15
     container_name: edf-feast-postgres
     restart: unless-stopped
     networks: [plat-net]
     environment:
-      POSTGRES_USER: feast
-      POSTGRES_PASSWORD: feast
-      POSTGRES_DB: feast
+      POSTGRES_USER: "${FEAST_PG_USER}"
+      POSTGRES_PASSWORD: "${FEAST_PG_PASSWORD}"
+      POSTGRES_DB: "${FEAST_PG_DB}"
     ports:
-      - "${FEAST_PG_PORT:-5432}:5432"
+      - "${FEAST_PG_PORT}:5432"
     volumes:
       - feast_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -228,16 +242,17 @@ services:
       retries: 20
 
   forecast-postgres:
+    <<: *common-env
     image: postgres:15
     container_name: edf-forecast-postgres
     restart: unless-stopped
     networks: [plat-net]
     environment:
-      POSTGRES_USER: forecast
-      POSTGRES_PASSWORD: forecast
-      POSTGRES_DB: forecast
+      POSTGRES_USER: "${FORECAST_PG_USER}"
+      POSTGRES_PASSWORD: "${FORECAST_PG_PASSWORD}"
+      POSTGRES_DB: "${FORECAST_PG_DB}"
     ports:
-      - "${FORECAST_PG_PORT:-5434}:5432"
+      - "${FORECAST_PG_PORT}:5432"
     volumes:
       - forecast_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -248,23 +263,25 @@ services:
 
   # Online store
   redis:
+    <<: *common-env
     image: redis:7
     container_name: edf-redis
     restart: unless-stopped
     networks: [plat-net]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT}:6379"
 
   # MLflow (tracking + registry)
   mlflow:
+    <<: *common-env
     image: ghcr.io/mlflow/mlflow:latest
     container_name: edf-mlflow
     restart: unless-stopped
     networks: [plat-net, obs-net]
     ports:
-      - "${MLFLOW_PORT:-5000}:5000"
+      - "${MLFLOW_PORT}:5000"
     environment:
-      MLFLOW_TRACKING_URI: "http://0.0.0.0:5000"
+      MLFLOW_TRACKING_URI: "${MLFLOW_TRACKING_URI}"
     command: >
       mlflow server
       --host 0.0.0.0
@@ -276,6 +293,7 @@ services:
 
   # Spark (for feature + transform jobs)
   spark-master:
+    <<: *common-env
     image: bitnami/spark:3.5
     container_name: edf-spark-master
     restart: unless-stopped
@@ -283,22 +301,24 @@ services:
     environment:
       - SPARK_MODE=master
     ports:
-      - "${SPARK_MASTER_UI_PORT:-8081}:8080"
-      - "${SPARK_MASTER_PORT:-7077}:7077"
+      - "${SPARK_MASTER_UI_PORT}:8080"
+      - "${SPARK_MASTER_PORT}:7077"
 
   spark-worker:
+    <<: *common-env
     image: bitnami/spark:3.5
     container_name: edf-spark-worker
     restart: unless-stopped
     networks: [spark-net, plat-net]
     environment:
       - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_MASTER_URL=${SPARK_MASTER_URL}
     depends_on:
       - spark-master
 
   # Airflow (LocalExecutor for local dev)
   airflow-postgres:
+    <<: *common-env
     image: postgres:15
     container_name: edf-airflow-postgres
     restart: unless-stopped
@@ -308,7 +328,7 @@ services:
       POSTGRES_PASSWORD: airflow
       POSTGRES_DB: airflow
     ports:
-      - "${AIRFLOW_PG_PORT:-5433}:5432"
+      - "${AIRFLOW_PG_PORT}:5432"
     volumes:
       - airflow_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -318,6 +338,7 @@ services:
       retries: 20
 
   airflow-init:
+    <<: *common-env
     build:
       context: ../..
       dockerfile: infra/airflow/Dockerfile
@@ -334,10 +355,9 @@ services:
       AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: "60"
       AIRFLOW__WEBSERVER__SECRET_KEY: "dev-secret-key"
       AIRFLOW__CORE__FERNET_KEY: "00000000000000000000000000000000"
-      AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Berlin
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: "${AIRFLOW__CORE__DEFAULT_TIMEZONE}"
       PYTHONPATH: /opt/edf
-      # handy endpoints for tasks
-      MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      MLFLOW_TRACKING_URI: "${MLFLOW_TRACKING_URI_INTERNAL}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
     volumes:
       - ../../:/opt/edf
@@ -357,6 +377,7 @@ services:
       "
 
   airflow-webserver:
+    <<: *common-env
     build:
       context: ../..
       dockerfile: infra/airflow/Dockerfile
@@ -372,16 +393,18 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: "dev-secret-key"
       AIRFLOW__CORE__FERNET_KEY: "00000000000000000000000000000000"
-      AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Berlin
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: "${AIRFLOW__CORE__DEFAULT_TIMEZONE}"
       PYTHONPATH: /opt/edf
+      MLFLOW_TRACKING_URI: "${MLFLOW_TRACKING_URI_INTERNAL}"
     volumes:
       - ../../:/opt/edf
       - airflow_logs:/opt/airflow/logs
     ports:
-      - "${AIRFLOW_PORT:-8080}:8080"
+      - "${AIRFLOW_PORT}:8080"
     command: webserver
 
   airflow-scheduler:
+    <<: *common-env
     build:
       context: ../..
       dockerfile: infra/airflow/Dockerfile
@@ -395,8 +418,11 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Berlin
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: "${AIRFLOW__CORE__DEFAULT_TIMEZONE}"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "dev-secret-key"
+      AIRFLOW__CORE__FERNET_KEY: "00000000000000000000000000000000"
       PYTHONPATH: /opt/edf
+      MLFLOW_TRACKING_URI: "${MLFLOW_TRACKING_URI_INTERNAL}"
     volumes:
       - ../../:/opt/edf
       - airflow_logs:/opt/airflow/logs
