@@ -13,7 +13,7 @@ class OpenMeteoRequest:
     latitude: float
     longitude: float
     start_date: str  # YYYY-MM-DD
-    end_date: str  # YYYY-MM-DD (inclusive in Open-Meteo semantics; we pass same day for 1 day)
+    end_date: str  # YYYY-MM-DD
     timezone: str = "UTC"
     hourly: tuple[str, ...] = (
         "temperature_2m",
@@ -28,7 +28,7 @@ class OpenMeteoRequest:
 class OpenMeteoClient:
     """
     Open-Meteo Forecast API:
-      https://api.open-meteo.com/v1/forecast?... (no API key) :contentReference[oaicite:2]{index=2}
+      https://api.open-meteo.com/v1/forecast?... (no API key)
     """
 
     def __init__(

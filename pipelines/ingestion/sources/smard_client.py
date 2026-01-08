@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
@@ -59,7 +58,6 @@ class SmardClient:
         # index_{resolution}.json
         path = f"chart_data/{key.filter_id}/{key.region}/index_{key.resolution}.json"
         data = self._get_json(path)
-        # usually a JSON array of ms timestamps; be defensive:
         if isinstance(data, list):
             return [int(x) for x in data]
         if (
@@ -74,7 +72,7 @@ class SmardClient:
         self, key: SmardSeriesKey, chunk_timestamp_ms: int
     ) -> Dict[str, Any]:
         # {filterCopy}_{regionCopy}_{resolution}_{timestamp}.json
-        # filterCopy/regionCopy must match filter/region (SMARD quirk). :contentReference[oaicite:5]{index=5}
+        # filterCopy/regionCopy must match filter/region (SMARD quirk).
         path = (
             f"chart_data/{key.filter_id}/{key.region}/"
             f"{key.filter_id}_{key.region}_{key.resolution}_{int(chunk_timestamp_ms)}.json"
@@ -87,7 +85,7 @@ class SmardClient:
     @staticmethod
     def parse_points(chunk: Dict[str, Any]) -> List[Tuple[int, float | None]]:
         """
-        SMARD typically returns something like:
+        SMARD returns something like:
           { ..., "series": [[ts_ms, value], ...], ... }
         but we stay defensive and try common keys.
         """

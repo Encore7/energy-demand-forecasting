@@ -16,20 +16,19 @@ from pipelines.ingestion.sources.open_meteo_client import (
 def main() -> None:
     run_date = os.environ["RUN_DATE"]  # YYYY-MM-DD
 
-    # Default: Berlin (Germany-ready baseline)
+    # Default: Berlin
     lat = float(os.environ.get("WEATHER_LAT", "52.5200"))
     lon = float(os.environ.get("WEATHER_LON", "13.4050"))
     location_name = os.environ.get("WEATHER_LOCATION_NAME", "berlin")
 
-    lakefs_s3_endpoint = os.environ.get(
-        "LAKEFS_S3_ENDPOINT_INTERNAL", "http://lakefs:8000"
-    )
-    aws_key = os.environ.get("MINIO_ROOT_USER", "minio")
-    aws_secret = os.environ.get("MINIO_ROOT_PASSWORD", "minio12345")
-    region = os.environ.get("S3_REGION", "us-east-1")
+    # Infra config
+    lakefs_s3_endpoint = os.environ["LAKEFS_S3_ENDPOINT_INTERNAL"]
+    aws_key = os.environ["MINIO_ROOT_USER"]
+    aws_secret = os.environ["MINIO_ROOT_PASSWORD"]
+    region = os.environ["S3_REGION"]
 
-    repo = os.environ.get("LAKEFS_REPO", "energy")
-    branch = os.environ.get("LAKEFS_BRANCH", "main")
+    repo = os.environ["LAKEFS_REPO"]
+    branch = os.environ["LAKEFS_BRANCH"]
 
     client = OpenMeteoClient()
     req = OpenMeteoRequest(

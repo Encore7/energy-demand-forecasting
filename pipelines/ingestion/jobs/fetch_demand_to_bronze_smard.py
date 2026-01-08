@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
@@ -12,7 +11,7 @@ from pipelines.ingestion.sources.smard_client import SmardClient, SmardSeriesKey
 
 
 def _dt_utc_range(run_date: str) -> tuple[datetime, datetime]:
-    # run_date is YYYY-MM-DD; SMARD timestamps are ms epoch UTC
+    """Compute UTC [start, end) interval for the given run_date (YYYY-MM-DD)."""
     start = datetime.fromisoformat(run_date).replace(tzinfo=timezone.utc)
     end = start + timedelta(days=1)
     return start, end
@@ -23,41 +22,47 @@ def _to_ms(dt: datetime) -> int:
 
 
 def _pick_chunk_timestamp(timestamps_ms: List[int], day_start_ms: int) -> int:
-    # choose greatest ts <= day_start to ensure the returned series includes the day
+    """
+    Choose the greatest timestamp <= day_start_ms so that the chunk
+    we fetch from SMARD definitely includes the requested day.
+    """
     candidates = [t for t in timestamps_ms if t <= day_start_ms]
     if not candidates:
-        # fallback: earliest available
+        # Fallback: use earliest available chunk
         return min(timestamps_ms)
     return max(candidates)
 
 
 def main() -> None:
+    # Airflow injects RUN_DATE via env: RUN_DATE='{{ ds }}'
     run_date = os.environ["RUN_DATE"]  # YYYY-MM-DD
 
     # lakeFS S3 gateway endpoint for S3 clients (inside docker network)
-    lakefs_s3_endpoint = os.environ.get(
-        "LAKEFS_S3_ENDPOINT_INTERNAL", "http://lakefs:8000"
-    )
+    lakefs_s3_endpoint = os.environ["LAKEFS_S3_ENDPOINT_INTERNAL"]
 
-    aws_key = os.environ.get("MINIO_ROOT_USER", "minio")
-    aws_secret = os.environ.get("MINIO_ROOT_PASSWORD", "minio12345")
-    region = os.environ.get("S3_REGION", "us-east-1")
+    aws_key = os.environ["MINIO_ROOT_USER"]
+    aws_secret = os.environ["MINIO_ROOT_PASSWORD"]
+    region = os.environ["S3_REGION"]
 
-    repo = os.environ.get("LAKEFS_REPO", "energy")
-    branch = os.environ.get("LAKEFS_BRANCH", "main")
+    repo = os.environ["LAKEFS_REPO"]
+    branch = os.environ["LAKEFS_BRANCH"]
 
     # SMARD base (public)
     smard = SmardClient(base_url="https://www.smard.de/app/")
 
-    key = SmardSeriesKey(
-        filter_id="410", region="DE", resolution="hour"
-    )  # total load, Germany :contentReference[oaicite:6]{index=6}
+    # total load, Germany, hourly resolution
+    key = SmardSeriesKey(filter_id="410", region="DE", resolution="hour")
+
     start_dt, end_dt = _dt_utc_range(run_date)
     start_ms, end_ms = _to_ms(start_dt), _to_ms(end_dt)
 
     timestamps = smard.list_timestamps_ms(key)
-    chunk_ts = _pick_chunk_timestamp(timestamps, start_ms)
+    if not timestamps:
+        raise RuntimeError(
+            f"No SMARD timestamps available for key={key} (filter=410, DE, hour)"
+        )
 
+    chunk_ts = _pick_chunk_timestamp(timestamps, start_ms)
     chunk = smard.fetch_timeseries_chunk(key, chunk_ts)
     points = smard.parse_points(chunk)
 
