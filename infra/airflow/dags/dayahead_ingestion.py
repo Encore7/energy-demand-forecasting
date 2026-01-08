@@ -12,17 +12,14 @@ DEFAULT_ARGS = {
     "retries": 1,
 }
 COMMON_ENV = {
-    # LakeFS + MinIO / S3
     "LAKEFS_REPO": os.getenv("LAKEFS_REPO", "energy"),
     "LAKEFS_BRANCH": os.getenv("LAKEFS_BRANCH", "main"),
-    # internal endpoint as seen from containers (not localhost)
     "LAKEFS_S3_ENDPOINT_INTERNAL": os.getenv(
         "LAKEFS_S3_ENDPOINT_INTERNAL", "http://lakefs:8000"
     ),
     "MINIO_ROOT_USER": os.getenv("MINIO_ROOT_USER", "minio"),
     "MINIO_ROOT_PASSWORD": os.getenv("MINIO_ROOT_PASSWORD", "minio12345"),
     "S3_REGION": os.getenv("S3_REGION", "us-east-1"),
-    # Optional but handy: in-container MLflow tracking URI
     "MLFLOW_TRACKING_URI": os.getenv(
         "MLFLOW_TRACKING_URI_INTERNAL", "http://mlflow:5000"
     ),
