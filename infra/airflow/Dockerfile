@@ -1,15 +1,27 @@
+FROM bde2020/spark-base:3.3.0-hadoop3.3 AS spark-base
 FROM apache/airflow:2.9.3-python3.11
 
 USER root
 
+# Base utilities + Java
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     ca-certificates \
     git \
     build-essential \
+    default-jdk \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
+
+# Java env
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+COPY --from=spark-base /spark /opt/spark
+
+ENV SPARK_HOME=/opt/spark
+ENV PATH="${SPARK_HOME}/bin:${PATH}"
 
 USER airflow
 
@@ -29,7 +41,8 @@ RUN pip install --upgrade pip setuptools wheel && \
       "pydantic>=2.7.0" \
       "pydantic-settings>=2.3.0" \
       "python-dotenv>=1.0.0" \
-      "requests>=2.32.0"
+      "requests>=2.32.0" \
+      "pyarrow>=16.0.0"
 
 ENV PYTHONPATH=/opt/edf
 WORKDIR /opt/airflow

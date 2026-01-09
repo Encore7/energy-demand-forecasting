@@ -12,18 +12,20 @@ DEFAULT_ARGS = {
     "retries": 1,
 }
 COMMON_ENV = {
-    "LAKEFS_REPO": os.getenv("LAKEFS_REPO", "energy"),
-    "LAKEFS_BRANCH": os.getenv("LAKEFS_BRANCH", "main"),
-    "LAKEFS_S3_ENDPOINT_INTERNAL": os.getenv(
-        "LAKEFS_S3_ENDPOINT_INTERNAL", "http://lakefs:8000"
-    ),
-    "MINIO_ROOT_USER": os.getenv("MINIO_ROOT_USER", "minio"),
-    "MINIO_ROOT_PASSWORD": os.getenv("MINIO_ROOT_PASSWORD", "minio12345"),
-    "S3_REGION": os.getenv("S3_REGION", "us-east-1"),
-    "MLFLOW_TRACKING_URI": os.getenv(
-        "MLFLOW_TRACKING_URI_INTERNAL", "http://mlflow:5000"
-    ),
+    "LAKEFS_REPO": os.environ["LAKEFS_REPO"],
+    "LAKEFS_BRANCH": os.environ["LAKEFS_BRANCH"],
+    "LAKEFS_S3_ENDPOINT_INTERNAL": os.environ["LAKEFS_S3_ENDPOINT_INTERNAL"],
+    "LAKEFS_ACCESS_KEY_ID": os.environ["LAKEFS_ACCESS_KEY_ID"],
+    "LAKEFS_SECRET_ACCESS_KEY": os.environ["LAKEFS_SECRET_ACCESS_KEY"],
+    "S3_REGION": os.environ["S3_REGION"],
+    "MLFLOW_TRACKING_URI": os.environ["MLFLOW_TRACKING_URI_INTERNAL"],
+    "STRICT_DEMAND_VALIDATION": os.environ.get("STRICT_DEMAND_VALIDATION", "true"),
+    "STRICT_WEATHER_VALIDATION": os.environ.get("STRICT_WEATHER_VALIDATION", "true"),
 }
+
+SPARK_PACKAGES = (
+    "org.apache.hadoop:hadoop-aws:3.3.1," "com.amazonaws:aws-java-sdk-bundle:1.12.262"
+)
 
 
 def bash_env_cmd(module_or_path: str, is_module: bool) -> str:
@@ -51,7 +53,7 @@ def bash_env_cmd(module_or_path: str, is_module: bool) -> str:
 
 
 with DAG(
-    dag_id="dayahead_ingest_and_silver",
+    dag_id="dayahead_ingestion",
     default_args=DEFAULT_ARGS,
     start_date=datetime(2026, 1, 1),
     schedule="@daily",
@@ -76,6 +78,14 @@ with DAG(
         ),
     )
 
+    ingest_calendar_to_bronze = BashOperator(
+        task_id="ingest_calendar_to_bronze",
+        bash_command=bash_env_cmd(
+            "pipelines.ingestion.jobs.generate_calendar_to_bronze",
+            is_module=True,
+        ),
+    )
+
     spark_env = {
         **COMMON_ENV,
         "RUN_DATE": "{{ ds }}",  # Airflow macro, templated per DAG run
@@ -86,16 +96,28 @@ with DAG(
         task_id="spark_bronze_to_silver_demand",
         application="/opt/edf/pipelines/transforms/spark/bronze_to_silver_demand.py",
         conn_id="spark_default",
+        name="bronze_to_silver_demand_smard",
         verbose=True,
         env_vars=spark_env,
+        packages=SPARK_PACKAGES,
     )
 
     bronze_to_silver_weather = SparkSubmitOperator(
         task_id="spark_bronze_to_silver_weather",
         application="/opt/edf/pipelines/transforms/spark/bronze_to_silver_weather.py",
         conn_id="spark_default",
+        name="bronze_to_silver_weather_openmeteo",
         verbose=True,
         env_vars=spark_env,
+        packages=SPARK_PACKAGES,
+    )
+
+    bronze_to_silver_calendar = BashOperator(
+        task_id="bronze_to_silver_calendar",
+        bash_command=bash_env_cmd(
+            "pipelines/transforms/spark/bronze_to_silver_calendar.py",
+            is_module=False,
+        ),
     )
 
     # 3) VALIDATE SILVER (GE-style checks; Python via BashOperator)
@@ -115,6 +137,15 @@ with DAG(
         ),
     )
 
+    validate_silver_calendar = BashOperator(
+        task_id="validate_silver_calendar",
+        bash_command=bash_env_cmd(
+            "pipelines/transforms/quality/validate_silver_calendar.py",
+            is_module=False,
+        ),
+    )
+
     # DAG DEPENDENCIES
     ingest_demand_to_bronze >> bronze_to_silver_demand >> validate_silver_demand
     ingest_weather_to_bronze >> bronze_to_silver_weather >> validate_silver_weather
+    ingest_calendar_to_bronze >> bronze_to_silver_calendar >> validate_silver_calendar

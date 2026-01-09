@@ -40,8 +40,8 @@ def main() -> None:
     # lakeFS S3 gateway endpoint for S3 clients (inside docker network)
     lakefs_s3_endpoint = os.environ["LAKEFS_S3_ENDPOINT_INTERNAL"]
 
-    aws_key = os.environ["MINIO_ROOT_USER"]
-    aws_secret = os.environ["MINIO_ROOT_PASSWORD"]
+    aws_key = os.environ["LAKEFS_ACCESS_KEY_ID"]
+    aws_secret = os.environ["LAKEFS_SECRET_ACCESS_KEY"]
     region = os.environ["S3_REGION"]
 
     repo = os.environ["LAKEFS_REPO"]

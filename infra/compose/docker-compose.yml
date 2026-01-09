@@ -172,11 +172,27 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/minio/health/ready | grep -q OK"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+  
+  minio-init:
+    <<: *common-env
+    image: minio/mc
+    container_name: edf-minio-init
+    depends_on:
+      - minio
+    networks: [plat-net]
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD}"
+      S3_BUCKET: "${S3_BUCKET}"
+    entrypoint: >
+      sh -c "
+        echo '>> Waiting for MinIO...';
+        sleep 5;
+        mc alias set local http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD &&
+        mc mb --ignore-existing local/$S3_BUCKET &&
+        echo '>> MinIO bucket ensured: '$S3_BUCKET
+      "
+    restart: "no"
 
   lakefs-postgres:
     <<: *common-env
@@ -205,10 +221,9 @@ services:
     ports:
       - "${LAKEFS_PORT}:8000"
     depends_on:
-      lakefs-postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
+      - lakefs-postgres
+      - minio
+      - minio-init
     environment:
       LAKEFS_AUTH_ENCRYPT_SECRET_KEY: "${LAKEFS_SECRET_KEY}"
       LAKEFS_DATABASE_TYPE: postgres
@@ -219,6 +234,19 @@ services:
       LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: "${MINIO_ROOT_USER}"
       LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
       LAKEFS_BLOCKSTORE_S3_REGION: "${S3_REGION}"
+
+  lakefs-bootstrap:
+    <<: *common-env
+    image: curlimages/curl:latest
+    container_name: edf-lakefs-bootstrap
+    depends_on:
+      - lakefs
+      - minio-init
+    networks: [plat-net]
+    volumes:
+      - ../../infra/lakefs/init/init_repo.sh:/init/init_repo.sh:ro
+    entrypoint: ["sh", "/init/init_repo.sh"]
+    restart: "no"
 
   # Stores: Feast offline + Forecast store
   feast-postgres:
@@ -293,6 +321,7 @@ services:
 
   # Spark (for feature + transform jobs)
   spark-master:
+    <<: *common-env
     platform: linux/amd64
     image: bde2020/spark-master:3.3.0-hadoop3.3
     container_name: spark-master
@@ -305,6 +334,7 @@ services:
       - INIT_DAEMON_STEP=setup_spark
 
   spark-worker:
+    <<: *common-env
     platform: linux/amd64
     image: bde2020/spark-worker:3.3.0-hadoop3.3
     container_name: spark-worker
@@ -353,14 +383,16 @@ services:
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: "60"
       AIRFLOW__WEBSERVER__SECRET_KEY: "dev-secret-key"
-      AIRFLOW__CORE__FERNET_KEY: "00000000000000000000000000000000"
+      AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
       AIRFLOW__CORE__DEFAULT_TIMEZONE: "${AIRFLOW__CORE__DEFAULT_TIMEZONE}"
       PYTHONPATH: /opt/edf
       MLFLOW_TRACKING_URI: "${MLFLOW_TRACKING_URI_INTERNAL}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-arm64"
     volumes:
       - ../../:/opt/edf
       - airflow_logs:/opt/airflow/logs
+      - ../../infra/airflow/dags:/opt/airflow/dags
     command:
       - bash
       - -c
@@ -382,13 +414,15 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: "dev-secret-key"
-      AIRFLOW__CORE__FERNET_KEY: "00000000000000000000000000000000"
+      AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
       AIRFLOW__CORE__DEFAULT_TIMEZONE: "${AIRFLOW__CORE__DEFAULT_TIMEZONE}"
       PYTHONPATH: /opt/edf
       MLFLOW_TRACKING_URI: "${MLFLOW_TRACKING_URI_INTERNAL}"
+      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-arm64"
     volumes:
       - ../../:/opt/edf
       - airflow_logs:/opt/airflow/logs
+      - ../../infra/airflow/dags:/opt/airflow/dags
     ports:
       - "${AIRFLOW_PORT}:8080"
     command: webserver
@@ -410,10 +444,12 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DEFAULT_TIMEZONE: "${AIRFLOW__CORE__DEFAULT_TIMEZONE}"
       AIRFLOW__WEBSERVER__SECRET_KEY: "dev-secret-key"
-      AIRFLOW__CORE__FERNET_KEY: "00000000000000000000000000000000"
+      AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
       PYTHONPATH: /opt/edf
       MLFLOW_TRACKING_URI: "${MLFLOW_TRACKING_URI_INTERNAL}"
+      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-arm64"
     volumes:
       - ../../:/opt/edf
       - airflow_logs:/opt/airflow/logs
+      - ../../infra/airflow/dags:/opt/airflow/dags
     command: scheduler
