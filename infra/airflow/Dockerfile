@@ -18,7 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
+# Copy Spark from spark-base image
 COPY --from=spark-base /spark /opt/spark
+
+RUN mkdir -p /opt/spark/jars
+
+# Added hadoop-aws + aws-java-sdk-bundle jars into Spark's classpath
+COPY infra/spark/jars/hadoop-aws-3.3.1.jar /opt/spark/jars/
+COPY infra/spark/jars/aws-java-sdk-bundle-1.12.262.jar /opt/spark/jars/
 
 ENV SPARK_HOME=/opt/spark
 ENV PATH="${SPARK_HOME}/bin:${PATH}"

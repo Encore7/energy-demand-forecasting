@@ -23,10 +23,6 @@ COMMON_ENV = {
     "STRICT_WEATHER_VALIDATION": os.environ.get("STRICT_WEATHER_VALIDATION", "true"),
 }
 
-SPARK_PACKAGES = (
-    "org.apache.hadoop:hadoop-aws:3.3.1," "com.amazonaws:aws-java-sdk-bundle:1.12.262"
-)
-
 
 def bash_env_cmd(module_or_path: str, is_module: bool) -> str:
     """
@@ -99,7 +95,6 @@ with DAG(
         name="bronze_to_silver_demand_smard",
         verbose=True,
         env_vars=spark_env,
-        packages=SPARK_PACKAGES,
     )
 
     bronze_to_silver_weather = SparkSubmitOperator(
@@ -109,7 +104,6 @@ with DAG(
         name="bronze_to_silver_weather_openmeteo",
         verbose=True,
         env_vars=spark_env,
-        packages=SPARK_PACKAGES,
     )
 
     bronze_to_silver_calendar = BashOperator(
@@ -145,7 +139,35 @@ with DAG(
         ),
     )
 
+    # SILVER -> GOLD (Spark)
+    compute_day_ahead_features = SparkSubmitOperator(
+        task_id="spark_silver_to_gold_day_ahead_features",
+        application="/opt/edf/pipelines/transforms/spark/silver_to_gold_day_ahead_features.py",
+        conn_id="spark_default",
+        name="silver_to_gold_day_ahead_features",
+        verbose=True,
+        env_vars=spark_env,
+    )
+
+    # VALIDATE GOLD FEATURES
+    validate_gold_features = BashOperator(
+        task_id="validate_gold_day_ahead_features",
+        bash_command=bash_env_cmd(
+            "pipelines/transforms/quality/validate_gold_day_ahead_features.py",
+            is_module=False,
+        ),
+    )
+
     # DAG DEPENDENCIES
     ingest_demand_to_bronze >> bronze_to_silver_demand >> validate_silver_demand
     ingest_weather_to_bronze >> bronze_to_silver_weather >> validate_silver_weather
     ingest_calendar_to_bronze >> bronze_to_silver_calendar >> validate_silver_calendar
+    (
+        [
+            validate_silver_demand,
+            validate_silver_weather,
+            validate_silver_calendar,
+        ]
+        >> compute_day_ahead_features
+        >> validate_gold_features
+    )

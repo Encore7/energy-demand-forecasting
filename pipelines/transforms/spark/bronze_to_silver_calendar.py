@@ -20,8 +20,6 @@ def main() -> None:
     aws_secret = os.environ["LAKEFS_SECRET_ACCESS_KEY"]
     region = os.environ["S3_REGION"]
 
-    location_name = os.environ.get("WEATHER_LOCATION_NAME", "berlin")
-
     s3 = boto3.client(
         "s3",
         endpoint_url=lakefs_s3_endpoint,
@@ -31,9 +29,7 @@ def main() -> None:
     )
 
     bronze_prefix = (
-        f"{branch}/bronze/calendar/source=derived/"
-        f"location={location_name}/"
-        f"ingestion_date={run_date}/"
+        f"{branch}/bronze/calendar/source=derived/" f"ingestion_date={run_date}/"
     )
 
     # Find the bronze JSON object for this date
@@ -50,20 +46,16 @@ def main() -> None:
     payload = json.loads(obj["Body"].read().decode("utf-8"))
 
     rows: List[Dict[str, Any]] = payload.get("data", [])
-    if len(rows) != 24:
+    if len(rows) != 1:
         print(
             f"[WARN] Calendar bronze rows={len(rows)} for dt={run_date}, "
-            "expected 24; continuing."
+            "expected 1; continuing."
         )
 
-    # Converted to Arrow Table
+    # Convert to Arrow Table
     table = pa.Table.from_pylist(rows)
 
-    # Write a single parquet file to Silver
-    silver_prefix = (
-        f"{branch}/silver/calendar/location={location_name}/"
-        f"granularity=hour/dt={run_date}/"
-    )
+    silver_prefix = f"{branch}/silver/calendar/dt={run_date}/"
     silver_key = f"{silver_prefix}calendar_{run_date}.parquet"
 
     buf = io.BytesIO()
