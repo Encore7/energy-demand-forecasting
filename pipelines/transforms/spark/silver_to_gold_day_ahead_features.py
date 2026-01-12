@@ -36,7 +36,6 @@ def main() -> None:
     branch = os.environ["LAKEFS_BRANCH"]
 
     # History to load for lags/rolling windows (in days)
-    # NOTE: assumes FEATURE_HISTORY_DAYS is set in env
     history_days = int(os.environ.get("FEATURE_HISTORY_DAYS"))
 
     run_date = datetime.strptime(run_date_str, "%Y-%m-%d").date()
@@ -105,10 +104,8 @@ def main() -> None:
 
     # Hour-of-day etc from timestamp (useful for both LightGBM and TFT)
     base = (
-        base.withColumn("hour", F.hour("event_ts_utc")).withColumn(
-            "minute", F.minute("event_ts_utc")
-        )
-        # Spark-safe: no week-based date_format pattern (no 'u')
+        base.withColumn("hour", F.hour("event_ts_utc"))
+        .withColumn("minute", F.minute("event_ts_utc"))
         .withColumn("day_of_week_ts", F.dayofweek("event_ts_utc"))
     )
 
