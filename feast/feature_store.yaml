@@ -1,0 +1,20 @@
+project: energy_demand
+
+# Local provider
+provider: local
+
+# Where Feast stores its registry DB
+registry: data/feast/registry.db
+
+# Offline store metadata
+offline_store:
+  type: file
+  path: data/feast/offline_store
+
+# Online store: we define a tiny sqlite store, not used for batch inference
+# Will add redis for online store once we add intra day forecasting
+online_store:
+  type: sqlite
+  path: data/feast/online_store.db
+
+entity_key_serialization_version: 2

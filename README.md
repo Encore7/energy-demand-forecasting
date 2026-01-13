@@ -172,6 +172,14 @@ only infrastructure configuration.
 
 ---
 
+# Backfill for Training Data:
+  ```
+  docker exec -it edf-airflow-scheduler bash
+  airflow dags backfill dayahead_ingestion -s 2026-01-06 -e 2026-01-09
+  ```
+
+---
+
 ## Disclaimer
 This repository is a professional portfolio project.
 It does not represent a real utility deployment.

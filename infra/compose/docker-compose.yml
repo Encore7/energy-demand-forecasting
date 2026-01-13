@@ -28,7 +28,6 @@ volumes:
   # Platform (data + stores)
   minio_data:
   lakefs_data:
-  feast_postgres_data:
   forecast_postgres_data:
   mlflow_data:
 
@@ -248,28 +247,8 @@ services:
     entrypoint: ["sh", "/init/init_repo.sh"]
     restart: "no"
 
-  # Stores: Feast offline + Forecast store
-  feast-postgres:
-    <<: *common-env
-    image: postgres:15
-    container_name: edf-feast-postgres
-    restart: unless-stopped
-    networks: [plat-net]
-    environment:
-      POSTGRES_USER: "${FEAST_PG_USER}"
-      POSTGRES_PASSWORD: "${FEAST_PG_PASSWORD}"
-      POSTGRES_DB: "${FEAST_PG_DB}"
-    ports:
-      - "${FEAST_PG_PORT}:5432"
-    volumes:
-      - feast_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "feast"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-  forecast-postgres:
+  # Stores: Forecast store
+  forecast-postgres: 
     <<: *common-env
     image: postgres:15
     container_name: edf-forecast-postgres
@@ -289,15 +268,15 @@ services:
       timeout: 5s
       retries: 20
 
-  # Online store
-  redis:
-    <<: *common-env
-    image: redis:7
-    container_name: edf-redis
-    restart: unless-stopped
-    networks: [plat-net]
-    ports:
-      - "${REDIS_PORT}:6379"
+  # # Online store (Need during intra day forecasting)
+  # redis:
+  #   <<: *common-env
+  #   image: redis:7
+  #   container_name: edf-redis
+  #   restart: unless-stopped
+  #   networks: [plat-net]
+  #   ports:
+  #     - "${REDIS_PORT}:6379"
 
   # MLflow (tracking + registry)
   mlflow:
@@ -453,3 +432,31 @@ services:
       - airflow_logs:/opt/airflow/logs
       - ../../infra/airflow/dags:/opt/airflow/dags
     command: scheduler
+
+  # Feast
+  feast-apply:
+    <<: *common-env
+    build:
+      context: ../..
+      dockerfile: infra/airflow/Dockerfile
+    container_name: edf-feast-apply
+    depends_on:
+      lakefs-bootstrap:
+        condition: service_completed_successfully
+    networks: [plat-net]
+    working_dir: /opt/edf/feast
+    environment:
+      # Map lakeFS creds to AWS_* so Feast's S3 client talks to lakeFS gateway
+      AWS_ACCESS_KEY_ID: "${LAKEFS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${LAKEFS_SECRET_ACCESS_KEY}"
+      AWS_REGION: "${S3_REGION}"
+      AWS_ENDPOINT_URL: "http://lakefs:8000"
+    volumes:
+      - ../../:/opt/edf
+    command:
+      - bash
+      - -c
+      - |
+        echo '>> Running feast apply...'
+        feast apply
+    restart: "no"
