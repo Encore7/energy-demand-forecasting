@@ -1,0 +1,175 @@
+{
+  "id": null,
+  "uid": "dayahead-energy",
+  "title": "Day-Ahead Energy Demand Forecast",
+  "tags": ["energy", "forecast", "dayahead"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Day-Ahead Forecast (y_hat_mw)",
+      "datasource": "Forecast Postgres",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT\n  event_ts_utc AS \"time\",\n  y_hat_mw AS \"forecast_mw\"\nFROM day_ahead_forecasts\nWHERE $__timeFilter(event_ts_utc)\nORDER BY event_ts_utc;",
+          "datasource": "Forecast Postgres"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Forecast vs Actual (MW)",
+      "datasource": "Forecast Postgres",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT\n  f.event_ts_utc AS \"time\",\n  f.y_hat_mw AS \"forecast_mw\",\n  a.load_mw AS \"actual_mw\"\nFROM day_ahead_forecasts f\nJOIN day_ahead_actuals a\n  ON f.event_ts_utc = a.event_ts_utc\n AND f.series_id = a.series_id\nWHERE $__timeFilter(f.event_ts_utc)\nORDER BY f.event_ts_utc;",
+          "datasource": "Forecast Postgres"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "MAPE Over Time",
+      "datasource": "Forecast Postgres",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "SELECT\n  target_date::timestamp AS \"time\",\n  mape AS \"MAPE_pct\"\nFROM day_ahead_metrics\nWHERE $__timeFilter(target_date::timestamp)\nORDER BY target_date;",
+          "datasource": "Forecast Postgres"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 18
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Successful dayahead_batch_inference runs (last 7d)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(airflow_dag_run_status{dag_id=\"dayahead_batch_inference\",status=\"success\"}[7d]))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 7
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "displayMode": "auto"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 18
+      }
+    }
+  ]
+}
